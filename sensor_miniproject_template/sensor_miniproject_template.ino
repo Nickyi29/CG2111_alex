@@ -72,7 +72,7 @@ ISR(INT4_vect) {
     if ((unsigned long)(now - lastButtonIsrMs) < 50) return;
     lastButtonIsrMs = now;
 
-    uint8_t pressed = (ESTOP_PINR & (1 << ESTOP_BIT)) ? 1 : 0;
+    uint8_t pressed = (ESTOP_PINR & (1 << ESTOP_BIT)) ? 0 : 1;
 
     if (buttonState == STATE_RUNNING && pressed) {
         buttonState = STATE_STOPPED;
