@@ -3,6 +3,8 @@
  * Studio 13: Sensor Mini-Project
  */
 
+ //Modifed from sensor_miniproject_template.ino
+
 #include <Arduino.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -11,7 +13,7 @@
 
 #include "packets.h"
 #include "serial_driver.h"
-
+#include "robotlib.ino"
 // =============================================================
 // Packet helpers
 // =============================================================
@@ -66,7 +68,7 @@ static void sendStatus(TState state) {
 volatile TState buttonState = STATE_RUNNING;
 volatile bool stateChanged = false;
 volatile unsigned long lastButtonIsrMs = 0;
-
+volatile uint8_t motorSpeed = 150;
 ISR(INT4_vect) {
     unsigned long now = millis();
     if ((unsigned long)(now - lastButtonIsrMs) < 50) return;
@@ -137,6 +139,7 @@ static void handleCommand(const TPacket *cmd) {
             buttonState = STATE_STOPPED;
             stateChanged = false;
             sei();
+            stop();
 
             TPacket pkt;
             memset(&pkt, 0, sizeof(pkt));
@@ -164,6 +167,32 @@ static void handleCommand(const TPacket *cmd) {
             strncpy(pkt.data, "Color sample ready", sizeof(pkt.data) - 1);
             pkt.data[sizeof(pkt.data) - 1] = '\0';
             sendFrame(&pkt);
+            break;
+        }
+        case COMMAND_FORWARD:{
+            forward(motorSpeed);
+            delay(500);
+            stop();
+            break;
+        }
+        case COMMAND_BACKWARD:{
+            backward(motorSpeed);
+            break;
+        }
+        case COMMAND_LEFT:{
+            ccw(motorSpeed);
+            break;
+        }
+        case COMMAND_RIGHT:{
+            cw(motorSpeed);
+            break;
+        }
+        case COMMAND_SPEED: {
+            int delta = (int)cmd->params[0];
+            int newSpeed = motorSpeed + delta * 20;
+            if (newSpeed < 0) newSpeed = 0;
+            if (newSpeed > 255) newSpeed = 255;
+            motorSpeed = newSpeed;
             break;
         }
 
