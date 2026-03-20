@@ -171,8 +171,6 @@ static void handleCommand(const TPacket *cmd) {
         }
         case COMMAND_FORWARD:{
             forward(motorSpeed);
-            delay(500);
-            stop();
             break;
         }
         case COMMAND_BACKWARD:{
