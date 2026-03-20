@@ -170,27 +170,32 @@ static void handleCommand(const TPacket *cmd) {
             break;
         }
         case COMMAND_FORWARD:{
+            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             forward(motorSpeed);
             break;
         }
         case COMMAND_BACKWARD:{
+            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             backward(motorSpeed);
             break;
         }
         case COMMAND_LEFT:{
+            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             ccw(motorSpeed);
             break;
         }
         case COMMAND_RIGHT:{
+            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             cw(motorSpeed);
             break;
         }
         case COMMAND_SPEED: {
-            int delta = (int)cmd->params[0];
-            int newSpeed = motorSpeed + delta * 20;
-            if (newSpeed < 0) newSpeed = 0;
+            // params[0] == 1 → speed up, params[0] == 0 → speed down
+            int delta = (cmd->params[0] == 1) ? 20 : -20;
+            int newSpeed = (int)motorSpeed + delta;
+            if (newSpeed < 0)   newSpeed = 0;
             if (newSpeed > 255) newSpeed = 255;
-            motorSpeed = newSpeed;
+            motorSpeed = (uint8_t)newSpeed;
             break;
         }
 
