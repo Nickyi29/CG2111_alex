@@ -51,6 +51,12 @@ PACKET_TYPE_COMMAND = 0
 PACKET_TYPE_RESPONSE = 1
 PACKET_TYPE_MESSAGE = 2
 
+COMMAND_FORWARD = 2
+COMMAND_BACKWARD = 3
+COMMAND_LEFT = 4
+COMMAND_RIGHT = 5
+COMMAND_SPEED = 6
+
 COMMAND_ESTOP = 0
 COMMAND_COLOR = 1
 
@@ -266,6 +272,18 @@ def handleUserInput(line):
         handleCameraCommand()
     elif line == 'l':
         handleLidarCommand()
+    elif line == 'w':
+        sendCommand(COMMAND_FORWARD)
+    elif line == 's':
+        sendCommand(COMMAND_BACKWARD)
+    elif line == 'a':
+        sendCommand(COMMAND_LEFT)
+    elif line == 'd':
+        sendCommand(COMMAND_RIGHT)
+    elif line == '+':
+        sendCommand(COMMAND_SPEED, params=[1])
+    elif line == '-':
+        sendCommand(COMMAND_SPEED, params=[-1])
     else:
         print(f"Unknown input: '{line}'. Valid: e, c, p, l")
 
