@@ -273,17 +273,21 @@ def handleUserInput(line):
     elif line == 'l':
         handleLidarCommand()
     elif line == 'w':
+        if isEstopActive(): print("Refused: E-Stop is active"); return
         sendCommand(COMMAND_FORWARD)
     elif line == 's':
+        if isEstopActive(): print("Refused: E-Stop is active"); return
         sendCommand(COMMAND_BACKWARD)
     elif line == 'a':
+        if isEstopActive(): print("Refused: E-Stop is active"); return
         sendCommand(COMMAND_LEFT)
     elif line == 'd':
+        if isEstopActive(): print("Refused: E-Stop is active"); return
         sendCommand(COMMAND_RIGHT)
     elif line == '+':
-        sendCommand(COMMAND_SPEED, params=[1])
+        sendCommand(COMMAND_SPEED, params=[1])   # 1 = increase
     elif line == '-':
-        sendCommand(COMMAND_SPEED, params=[-1])
+        sendCommand(COMMAND_SPEED, params=[0])   # 0 = decrease (was -1, invalid for uint32)
     else:
         print(f"Unknown input: '{line}'. Valid: e, c, p, l")
 
