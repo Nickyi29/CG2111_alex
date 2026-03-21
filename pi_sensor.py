@@ -45,20 +45,20 @@ def closeSerial():
 
 # ----------------------------------------------------------------
 # TPACKET CONSTANTS
+# Must match the Arduino side
 # ----------------------------------------------------------------
 
 PACKET_TYPE_COMMAND = 0
 PACKET_TYPE_RESPONSE = 1
 PACKET_TYPE_MESSAGE = 2
 
+COMMAND_ESTOP = 0
+COMMAND_COLOR = 1
 COMMAND_FORWARD = 2
 COMMAND_BACKWARD = 3
 COMMAND_LEFT = 4
 COMMAND_RIGHT = 5
 COMMAND_SPEED = 6
-
-COMMAND_ESTOP = 0
-COMMAND_COLOR = 1
 
 RESP_OK = 0
 RESP_STATUS = 1
@@ -70,11 +70,11 @@ STATE_STOPPED = 1
 MAX_STR_LEN = 32
 PARAMS_COUNT = 16
 
-TPACKET_SIZE = 1 + 1 + 2 + MAX_STR_LEN + (PARAMS_COUNT * 4)
-TPACKET_FMT = f'<BB2x{MAX_STR_LEN}s{PARAMS_COUNT}I'
+TPACKET_SIZE = 1 + 1 + 2 + MAX_STR_LEN + (PARAMS_COUNT * 4)   # 100 bytes
+TPACKET_FMT = f"<BB2x{MAX_STR_LEN}s{PARAMS_COUNT}I"
 
-MAGIC = b'\xDE\xAD'
-FRAME_SIZE = len(MAGIC) + TPACKET_SIZE + 1
+MAGIC = b"\xDE\xAD"
+FRAME_SIZE = 2 + TPACKET_SIZE + 1   # 103 bytes
 
 
 def computeChecksum(data: bytes) -> int:
@@ -84,22 +84,24 @@ def computeChecksum(data: bytes) -> int:
     return result
 
 
-def packFrame(packetType, command, data=b'', params=None):
+def packFrame(packetType, command, data=b"", params=None):
     if params is None:
         params = [0] * PARAMS_COUNT
-    data_padded = (data + b'\x00' * MAX_STR_LEN)[:MAX_STR_LEN]
+
+    data_padded = (data + b"\x00" * MAX_STR_LEN)[:MAX_STR_LEN]
     packet_bytes = struct.pack(TPACKET_FMT, packetType, command, data_padded, *params)
     checksum = computeChecksum(packet_bytes)
+
     return MAGIC + packet_bytes + bytes([checksum])
 
 
 def unpackTPacket(raw):
     fields = struct.unpack(TPACKET_FMT, raw)
     return {
-        'packetType': fields[0],
-        'command': fields[1],
-        'data': fields[2],
-        'params': list(fields[3:]),
+        "packetType": fields[0],
+        "command": fields[1],
+        "data": fields[2],
+        "params": list(fields[3:]),
     }
 
 
@@ -120,7 +122,7 @@ def receiveFrame():
         if b[0] != magic_lo:
             continue
 
-        raw = b''
+        raw = b""
         while len(raw) < TPACKET_SIZE:
             chunk = _ser.read(TPACKET_SIZE - len(raw))
             if not chunk:
@@ -130,13 +132,14 @@ def receiveFrame():
         cs_byte = _ser.read(1)
         if not cs_byte:
             return None
+
         if cs_byte[0] != computeChecksum(raw):
             continue
 
         return unpackTPacket(raw)
 
 
-def sendCommand(commandType, data=b'', params=None):
+def sendCommand(commandType, data=b"", params=None):
     frame = packFrame(PACKET_TYPE_COMMAND, commandType, data=data, params=params)
     _ser.write(frame)
 
@@ -159,15 +162,15 @@ def isEstopActive():
 def printPacket(pkt):
     global _estop_state
 
-    ptype = pkt['packetType']
-    cmd = pkt['command']
+    ptype = pkt["packetType"]
+    cmd = pkt["command"]
 
     if ptype == PACKET_TYPE_RESPONSE:
         if cmd == RESP_OK:
             print("Response: OK")
 
         elif cmd == RESP_STATUS:
-            state = pkt['params'][0]
+            state = pkt["params"][0]
             _estop_state = state
             if state == STATE_RUNNING:
                 print("Status: RUNNING")
@@ -175,20 +178,20 @@ def printPacket(pkt):
                 print("Status: STOPPED")
 
         elif cmd == RESP_COLOR:
-            r = pkt['params'][0]
-            g = pkt['params'][1]
-            b = pkt['params'][2]
+            r = pkt["params"][0]
+            g = pkt["params"][1]
+            b = pkt["params"][2]
             print(f"Color: R={r} Hz, G={g} Hz, B={b} Hz")
 
         else:
             print(f"Response: unknown command {cmd}")
 
-        debug = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
+        debug = pkt["data"].rstrip(b"\x00").decode("ascii", errors="replace")
         if debug:
             print(f"Arduino debug: {debug}")
 
     elif ptype == PACKET_TYPE_MESSAGE:
-        msg = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
+        msg = pkt["data"].rstrip(b"\x00").decode("ascii", errors="replace")
         print(f"Arduino: {msg}")
 
     else:
@@ -196,7 +199,7 @@ def printPacket(pkt):
 
 
 # ----------------------------------------------------------------
-# ACTIVITY 2: COLOR SENSOR
+# COLOR SENSOR
 # ----------------------------------------------------------------
 
 def handleColorCommand():
@@ -209,7 +212,7 @@ def handleColorCommand():
 
 
 # ----------------------------------------------------------------
-# ACTIVITY 3: CAMERA
+# CAMERA
 # ----------------------------------------------------------------
 
 _camera = None
@@ -218,7 +221,12 @@ _frames_remaining = 5
 
 def openCamera():
     global _camera
-    _camera = cameraOpen()
+    try:
+        _camera = cameraOpen()
+        print("Camera opened.")
+    except Exception as e:
+        _camera = None
+        print(f"Camera open failed: {e}")
 
 
 def closeCamera():
@@ -235,6 +243,10 @@ def handleCameraCommand():
         print("Refused: E-Stop is active")
         return
 
+    if _camera is None:
+        print("Refused: camera is not available")
+        return
+
     if _frames_remaining <= 0:
         print("Refused: no camera frames remaining")
         return
@@ -246,7 +258,7 @@ def handleCameraCommand():
 
 
 # ----------------------------------------------------------------
-# ACTIVITY 4: LIDAR
+# LIDAR
 # ----------------------------------------------------------------
 
 def handleLidarCommand():
@@ -255,7 +267,54 @@ def handleLidarCommand():
         return
 
     print("Starting single LIDAR scan...")
-    plot_single_scan()
+    try:
+        plot_single_scan()
+    except Exception as e:
+        print(f"LIDAR error: {e}")
+
+
+# ----------------------------------------------------------------
+# MOVEMENT HELPERS
+# ----------------------------------------------------------------
+
+def sendMovementCommand(commandType, label):
+    if isEstopActive():
+        print("Refused: E-Stop is active")
+        return
+
+    print(f"Sending {label} command...")
+    sendCommand(commandType)
+
+
+def sendSpeedCommand(increase):
+    if isEstopActive():
+        print("Refused: E-Stop is active")
+        return
+
+    if increase:
+        print("Sending SPEED UP command...")
+        sendCommand(COMMAND_SPEED, params=[1])
+    else:
+        print("Sending SPEED DOWN command...")
+        sendCommand(COMMAND_SPEED, params=[0])
+
+
+def printHelp():
+    print("=== Robot Controls ===")
+    print("Type one command and press Enter.")
+    print("")
+    print("e : software E-Stop")
+    print("c : color sensor")
+    print("p : capture camera frame")
+    print("l : single LIDAR scan")
+    print("w : move forward")
+    print("s : move backward")
+    print("a : turn left")
+    print("d : turn right")
+    print("+ : speed up")
+    print("- : speed down")
+    print("h : show this help")
+    print("")
 
 
 # ----------------------------------------------------------------
@@ -263,37 +322,48 @@ def handleLidarCommand():
 # ----------------------------------------------------------------
 
 def handleUserInput(line):
-    if line == 'e':
+    if line == "e":
         print("Sending E-Stop command...")
-        sendCommand(COMMAND_ESTOP, data=b'This is a debug message')
-    elif line == 'c':
+        sendCommand(COMMAND_ESTOP, data=b"Software E-Stop")
+
+    elif line == "c":
         handleColorCommand()
-    elif line == 'p':
+
+    elif line == "p":
         handleCameraCommand()
-    elif line == 'l':
+
+    elif line == "l":
         handleLidarCommand()
-    elif line == 'w':
-        if isEstopActive(): print("Refused: E-Stop is active"); return
-        sendCommand(COMMAND_FORWARD)
-    elif line == 's':
-        if isEstopActive(): print("Refused: E-Stop is active"); return
-        sendCommand(COMMAND_BACKWARD)
-    elif line == 'a':
-        if isEstopActive(): print("Refused: E-Stop is active"); return
-        sendCommand(COMMAND_LEFT)
-    elif line == 'd':
-        if isEstopActive(): print("Refused: E-Stop is active"); return
-        sendCommand(COMMAND_RIGHT)
-    elif line == '+':
-        sendCommand(COMMAND_SPEED, params=[1])   # 1 = increase
-    elif line == '-':
-        sendCommand(COMMAND_SPEED, params=[0])   # 0 = decrease (was -1, invalid for uint32)
+
+    elif line == "w":
+        sendMovementCommand(COMMAND_FORWARD, "FORWARD")
+
+    elif line == "s":
+        sendMovementCommand(COMMAND_BACKWARD, "BACKWARD")
+
+    elif line == "a":
+        sendMovementCommand(COMMAND_LEFT, "LEFT")
+
+    elif line == "d":
+        sendMovementCommand(COMMAND_RIGHT, "RIGHT")
+
+    elif line == "+":
+        sendSpeedCommand(True)
+
+    elif line == "-":
+        sendSpeedCommand(False)
+
+    elif line == "h":
+        printHelp()
+
     else:
-        print(f"Unknown input: '{line}'. Valid: e, c, p, l")
+        print(f"Unknown input: '{line}'")
+        print("Valid: e, c, p, l, w, s, a, d, +, -, h")
 
 
 def runCommandInterface():
-    print("Sensor interface ready. Type e / c / p / l and press Enter.")
+    print("Sensor interface ready.")
+    printHelp()
     print("Press Ctrl+C to exit.\n")
 
     while True:
@@ -311,7 +381,7 @@ def runCommandInterface():
         time.sleep(0.05)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     openSerial()
     openCamera()
     try:
