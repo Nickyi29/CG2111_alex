@@ -66,19 +66,11 @@ STATE_STOPPED = 1
 MAX_STR_LEN  = 32
 PARAMS_COUNT = 16
 
-# FIX: explicit correct format matching TPacket struct in packets.h exactly:
-#   < = little-endian
-#   B = packetType  (uint8_t, 1 byte)
-#   B = command     (uint8_t, 1 byte)
-#   2x = dummy[2]  (2 padding bytes, not unpacked)
-#   32s = data[32] (char[32], 32 bytes)
-#   16I = params[16] (uint32_t x16, 64 bytes)
-#   Total = 1+1+2+32+64 = 100 bytes = TPACKET_SIZE ✓
 TPACKET_FMT  = "<BB2x32s16I"
-TPACKET_SIZE = struct.calcsize(TPACKET_FMT)   # should be 100
+TPACKET_SIZE = struct.calcsize(TPACKET_FMT)   # 100 bytes
 
-MAGIC      = b'\xDE\xAD'                      # matches MAGIC_HI/LO in packets.h
-FRAME_SIZE = len(MAGIC) + TPACKET_SIZE + 1    # 2 + 100 + 1 = 103 bytes
+MAGIC      = b'\xDE\xAD'
+FRAME_SIZE = len(MAGIC) + TPACKET_SIZE + 1    # 103 bytes
 
 # ----------------------------------------------------------------
 # PACKET FRAMING
@@ -93,7 +85,6 @@ def computeChecksum(data) -> int:
 def packFrame(packetType, command, data=b'', params=None):
     if params is None:
         params = []
-    # Always pad params list to exactly PARAMS_COUNT with zeros
     params       = list(params) + [0] * (PARAMS_COUNT - len(params))
     data_padded  = (data + b'\x00' * MAX_STR_LEN)[:MAX_STR_LEN]
     packet_bytes = struct.pack(TPACKET_FMT, packetType, command, data_padded, *params)
@@ -119,7 +110,6 @@ def receiveFrame():
             return None
         if b[0] != magic_hi:
             continue
-
         b = _ser.read(1)
         if not b:
             return None
@@ -144,7 +134,7 @@ def receiveFrame():
 def sendCommand(commandType, data=b'', params=None):
     frame = packFrame(PACKET_TYPE_COMMAND, commandType, data=data, params=params)
     _ser.write(frame)
-    _ser.flush()   # FIX: force bytes out of OS buffer immediately
+    _ser.flush()
 
 # ----------------------------------------------------------------
 # E-STOP STATE
@@ -168,10 +158,9 @@ def printPacket(pkt):
     if ptype == PACKET_TYPE_RESPONSE:
         if cmd == RESP_OK:
             new_speed = pkt['params'][0]
-            if new_speed > 0:
-                print(f"Response: OK  (motorSpeed now = {new_speed})")
-            else:
-                print("Response: OK")
+            pct       = round(new_speed / 255 * 100)
+            # FIX: show speed value and % so user knows current level and floor/ceiling
+            print(f"Speed updated → {new_speed}/255 ({pct}%)")
 
         elif cmd == RESP_STATUS:
             state        = pkt['params'][0]
