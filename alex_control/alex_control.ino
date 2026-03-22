@@ -12,13 +12,19 @@
 #include "packets.h"
 #include "serial_driver.h"
 
-// Direction constants matching the dir enum in robotlib.ino
-// Defined here because alex_control.ino is compiled before robotlib.ino
+// Direction constants — must match dir enum values in robotlib.ino
+// Defined here as #define so they are available before robotlib.ino is merged
 #define DIR_STOP 0
 #define DIR_GO   1
 #define DIR_BACK 2
 #define DIR_CCW  3
 #define DIR_CW   4
+
+// Speed limits
+#define SPEED_MIN 30    // FIX: lowered from 50 → allows slower crawl (3 steps down from 150)
+#define SPEED_MAX 255
+#define SPEED_DEFAULT 150
+#define SPEED_STEP    50
 
 // =============================================================
 // Pin mapping
@@ -42,13 +48,13 @@
 #define TCS_S3_BIT PA3
 
 // =============================================================
-// E-Stop + speed + direction state
+// State
 // =============================================================
 
 volatile TState        buttonState     = STATE_RUNNING;
 volatile bool          stateChanged    = false;
 volatile unsigned long lastButtonIsrMs = 0;
-volatile uint8_t       motorSpeed      = 150;
+volatile uint8_t       motorSpeed      = SPEED_DEFAULT;
 volatile uint8_t       currentDir      = DIR_STOP;
 
 ISR(INT4_vect) {
@@ -196,14 +202,16 @@ static void handleCommand(const TPacket *cmd) {
         }
 
         case COMMAND_SPEED: {
-            int delta    = (cmd->params[0] == 1) ? 50 : -50;
+            int delta    = (cmd->params[0] == 1) ? SPEED_STEP : -SPEED_STEP;
             int newSpeed = (int)motorSpeed + delta;
-            if (newSpeed < 50)  newSpeed = 50;
-            if (newSpeed > 255) newSpeed = 255;
+            if (newSpeed < SPEED_MIN) newSpeed = SPEED_MIN;  // FIX: floor = 30
+            if (newSpeed > SPEED_MAX) newSpeed = SPEED_MAX;
             motorSpeed = (uint8_t)newSpeed;
+            // immediately re-apply if robot is currently moving
             if (buttonState != STATE_STOPPED && currentDir != DIR_STOP) {
                 move(motorSpeed, currentDir);
             }
+            // send new speed back so Pi can display it
             sendResponse(RESP_OK, motorSpeed);
             break;
         }
@@ -233,7 +241,7 @@ void setup() {
     TCS_CTRL_PORT |=  (1 << TCS_S0_BIT);
     TCS_CTRL_PORT &= ~(1 << TCS_S1_BIT);
 
-    // E-Stop input — pull-up enabled to prevent floating pin
+    // E-Stop — pull-up enabled, prevents floating pin phantom triggers
     ESTOP_DDR  &= ~(1 << ESTOP_BIT);
     ESTOP_PORT |=  (1 << ESTOP_BIT);
 
