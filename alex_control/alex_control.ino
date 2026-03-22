@@ -12,15 +12,17 @@
 #include "packets.h"
 #include "serial_driver.h"
 
+// Direction constants matching the dir enum in robotlib.ino
+// Defined here because alex_control.ino is compiled before robotlib.ino
+#define DIR_STOP 0
+#define DIR_GO   1
+#define DIR_BACK 2
+#define DIR_CCW  3
+#define DIR_CW   4
+
 // =============================================================
 // Pin mapping
 // =============================================================
-// D2  <- E-Stop button
-// D3  <- TCS3200 OUT
-// D22 <- TCS3200 S0
-// D23 <- TCS3200 S1
-// D24 <- TCS3200 S2
-// D25 <- TCS3200 S3
 
 #define ESTOP_DDR  DDRE
 #define ESTOP_PORT PORTE
@@ -41,15 +43,13 @@
 
 // =============================================================
 // E-Stop + speed + direction state
-// NOTE: direction constants (STOP, GO, BACK, CW, CCW) come
-//       from the dir enum defined in robotlib.ino
 // =============================================================
 
 volatile TState        buttonState     = STATE_RUNNING;
 volatile bool          stateChanged    = false;
 volatile unsigned long lastButtonIsrMs = 0;
 volatile uint8_t       motorSpeed      = 150;
-volatile uint8_t       currentDir      = STOP;   // FIX: was STOP_DIR, robotlib uses STOP
+volatile uint8_t       currentDir      = DIR_STOP;
 
 ISR(INT4_vect) {
     unsigned long now = millis();
@@ -138,7 +138,7 @@ static void handleCommand(const TPacket *cmd) {
             buttonState  = STATE_STOPPED;
             stateChanged = false;
             sei();
-            currentDir = STOP;   // FIX: was STOP_DIR
+            currentDir = DIR_STOP;
             stop();
             TPacket pkt;
             memset(&pkt, 0, sizeof(pkt));
@@ -169,28 +169,28 @@ static void handleCommand(const TPacket *cmd) {
 
         case COMMAND_FORWARD: {
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
-            currentDir = GO;
+            currentDir = DIR_GO;
             forward(motorSpeed);
             break;
         }
 
         case COMMAND_BACKWARD: {
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
-            currentDir = BACK;
+            currentDir = DIR_BACK;
             backward(motorSpeed);
             break;
         }
 
         case COMMAND_LEFT: {
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
-            currentDir = CCW;
+            currentDir = DIR_CCW;
             ccw(motorSpeed);
             break;
         }
 
         case COMMAND_RIGHT: {
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
-            currentDir = CW;
+            currentDir = DIR_CW;
             cw(motorSpeed);
             break;
         }
@@ -198,11 +198,10 @@ static void handleCommand(const TPacket *cmd) {
         case COMMAND_SPEED: {
             int delta    = (cmd->params[0] == 1) ? 50 : -50;
             int newSpeed = (int)motorSpeed + delta;
-            if (newSpeed < 50)  newSpeed = 50;   // floor: prevent motor stall
+            if (newSpeed < 50)  newSpeed = 50;
             if (newSpeed > 255) newSpeed = 255;
             motorSpeed = (uint8_t)newSpeed;
-            // immediately re-apply if robot is currently moving
-            if (buttonState != STATE_STOPPED && currentDir != STOP) {  // FIX: was STOP_DIR
+            if (buttonState != STATE_STOPPED && currentDir != DIR_STOP) {
                 move(motorSpeed, currentDir);
             }
             sendResponse(RESP_OK, motorSpeed);
@@ -225,15 +224,12 @@ void setup() {
     Serial.begin(9600);
 #endif
 
-    // TCS3200 control pins output
     TCS_CTRL_DDR |= (1 << TCS_S0_BIT) | (1 << TCS_S1_BIT)
                   | (1 << TCS_S2_BIT) | (1 << TCS_S3_BIT);
 
-    // TCS3200 OUT input, no pull-up
     TCS_OUT_DDR  &= ~(1 << TCS_OUT_BIT);
     TCS_OUT_PORT &= ~(1 << TCS_OUT_BIT);
 
-    // 20% scaling: S0=HIGH, S1=LOW
     TCS_CTRL_PORT |=  (1 << TCS_S0_BIT);
     TCS_CTRL_PORT &= ~(1 << TCS_S1_BIT);
 
