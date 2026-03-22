@@ -289,7 +289,7 @@ void setup() {
 
   // E-Stop input: D2 = PE4 input
   ESTOP_DDR &= ~(1 << ESTOP_BIT);
-  ESTOP_PORT &= ~(1 << ESTOP_BIT);   // keep as external resistor wiring
+  ESTOP_PORT |= (1 << ESTOP_BIT);   // keep as external resistor wiring
 
   // INT4 on any logical change
   EICRB &= ~((1 << ISC41) | (1 << ISC40));
