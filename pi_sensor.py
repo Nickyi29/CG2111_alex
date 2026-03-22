@@ -70,8 +70,8 @@ PARAMS_COUNT = 16
 TPACKET_SIZE = 1 + 1 + 2 + MAX_STR_LEN + (PARAMS_COUNT * 4)
 TPACKET_FMT  = f"<BB2x{MAX_STR_LEN}s{PARAMS_COUNT}I"
 
-MAGIC      = b'\xAB\xCD'
-FRAME_SIZE = len(MAGIC) + TPACKET_SIZE + 1  # FIX: was missing, caused NameError in runCommandInterface
+MAGIC      = b'\xDE\xAD'                    # matches MAGIC_HI/LO in packets.h
+FRAME_SIZE = len(MAGIC) + TPACKET_SIZE + 1  # 2 + 100 + 1 = 103 bytes
 
 # ----------------------------------------------------------------
 # PACKET FRAMING
@@ -86,9 +86,6 @@ def computeChecksum(data) -> int:
 def packFrame(packetType, command, data=b'', params=None):
     if params is None:
         params = []
-    # FIX: always pad params to exactly PARAMS_COUNT with zeros
-    # Previously, passing params=[1] caused struct.error because only 1 value
-    # was unpacked instead of the required 16
     params = list(params) + [0] * (PARAMS_COUNT - len(params))
     data_padded  = (data + b'\x00' * MAX_STR_LEN)[:MAX_STR_LEN]
     packet_bytes = struct.pack(TPACKET_FMT, packetType, command, data_padded, *params)
@@ -206,7 +203,7 @@ def handleColorCommand():
 # ACTIVITY 3: CAMERA
 # ----------------------------------------------------------------
 
-_camera         = None
+_camera           = None
 _frames_remaining = 5
 
 def openCamera():
@@ -268,17 +265,17 @@ def handleUserInput(line):
     elif line == 'a':
         if isEstopActive(): print("Refused: E-Stop is active"); return
         print("Sending LEFT command...")
-        sendCommand(COMMAND_LEFT)
+        sendCommand(COMMAND_RIGHT)   # swapped: a key turns right physically
     elif line == 'd':
         if isEstopActive(): print("Refused: E-Stop is active"); return
         print("Sending RIGHT command...")
-        sendCommand(COMMAND_RIGHT)
+        sendCommand(COMMAND_LEFT)    # swapped: d key turns left physically
     elif line == '+':
         print("Sending SPEED UP command...")
-        sendCommand(COMMAND_SPEED, params=[1])   # FIX: params padded to 16 in packFrame
+        sendCommand(COMMAND_SPEED, params=[1])
     elif line == '-':
         print("Sending SPEED DOWN command...")
-        sendCommand(COMMAND_SPEED, params=[0])   # FIX: params padded to 16 in packFrame
+        sendCommand(COMMAND_SPEED, params=[0])
     else:
         print(f"Unknown input: '{line}'. Valid: w/a/s/d, e, c, p, l, +/-")
 
@@ -290,7 +287,7 @@ def runCommandInterface():
     print("Press Ctrl+C to exit.\n")
 
     while True:
-        if _ser.in_waiting >= FRAME_SIZE:   # FIX: FRAME_SIZE now defined above
+        if _ser.in_waiting >= FRAME_SIZE:
             pkt = receiveFrame()
             if pkt:
                 printPacket(pkt)
