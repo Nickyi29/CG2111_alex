@@ -271,7 +271,8 @@ static void handleCommand(const TPacket *cmd) {
 
         case COMMAND_SPEED: {
             // params[0] == 1 → speed up, params[0] == 0 → speed down
-            int delta    = (cmd->params[0] == 1) ? 20 : -20;
+            // AFTER
+            int delta = (cmd->params[0] == 1) ? 50 : -50;
             int newSpeed = (int)motorSpeed + delta;
             if (newSpeed < 0)   newSpeed = 0;
             if (newSpeed > 255) newSpeed = 255;
