@@ -41,21 +41,20 @@ def closeSerial():
         _ser.close()
 
 # ----------------------------------------------------------------
-# TPACKET CONSTANTS
+# TPACKET CONSTANTS — must stay in sync with packets.h
 # ----------------------------------------------------------------
 
 PACKET_TYPE_COMMAND  = 0
 PACKET_TYPE_RESPONSE = 1
 PACKET_TYPE_MESSAGE  = 2
 
+COMMAND_ESTOP    = 0
+COMMAND_COLOR    = 1
 COMMAND_FORWARD  = 2
 COMMAND_BACKWARD = 3
 COMMAND_LEFT     = 4
 COMMAND_RIGHT    = 5
 COMMAND_SPEED    = 6
-
-COMMAND_ESTOP = 0
-COMMAND_COLOR = 1
 
 RESP_OK     = 0
 RESP_STATUS = 1
@@ -67,11 +66,19 @@ STATE_STOPPED = 1
 MAX_STR_LEN  = 32
 PARAMS_COUNT = 16
 
-TPACKET_SIZE = 1 + 1 + 2 + MAX_STR_LEN + (PARAMS_COUNT * 4)
-TPACKET_FMT  = f"<BB2x{MAX_STR_LEN}s{PARAMS_COUNT}I"
+# FIX: explicit correct format matching TPacket struct in packets.h exactly:
+#   < = little-endian
+#   B = packetType  (uint8_t, 1 byte)
+#   B = command     (uint8_t, 1 byte)
+#   2x = dummy[2]  (2 padding bytes, not unpacked)
+#   32s = data[32] (char[32], 32 bytes)
+#   16I = params[16] (uint32_t x16, 64 bytes)
+#   Total = 1+1+2+32+64 = 100 bytes = TPACKET_SIZE ✓
+TPACKET_FMT  = "<BB2x32s16I"
+TPACKET_SIZE = struct.calcsize(TPACKET_FMT)   # should be 100
 
-MAGIC      = b'\xDE\xAD'                    # matches MAGIC_HI/LO in packets.h
-FRAME_SIZE = len(MAGIC) + TPACKET_SIZE + 1  # 2 + 100 + 1 = 103 bytes
+MAGIC      = b'\xDE\xAD'                      # matches MAGIC_HI/LO in packets.h
+FRAME_SIZE = len(MAGIC) + TPACKET_SIZE + 1    # 2 + 100 + 1 = 103 bytes
 
 # ----------------------------------------------------------------
 # PACKET FRAMING
@@ -86,7 +93,8 @@ def computeChecksum(data) -> int:
 def packFrame(packetType, command, data=b'', params=None):
     if params is None:
         params = []
-    params = list(params) + [0] * (PARAMS_COUNT - len(params))
+    # Always pad params list to exactly PARAMS_COUNT with zeros
+    params       = list(params) + [0] * (PARAMS_COUNT - len(params))
     data_padded  = (data + b'\x00' * MAX_STR_LEN)[:MAX_STR_LEN]
     packet_bytes = struct.pack(TPACKET_FMT, packetType, command, data_padded, *params)
     checksum     = computeChecksum(packet_bytes)
@@ -136,6 +144,7 @@ def receiveFrame():
 def sendCommand(commandType, data=b'', params=None):
     frame = packFrame(PACKET_TYPE_COMMAND, commandType, data=data, params=params)
     _ser.write(frame)
+    _ser.flush()   # FIX: force bytes out of OS buffer immediately
 
 # ----------------------------------------------------------------
 # E-STOP STATE
@@ -158,7 +167,11 @@ def printPacket(pkt):
 
     if ptype == PACKET_TYPE_RESPONSE:
         if cmd == RESP_OK:
-            print("Response: OK")
+            new_speed = pkt['params'][0]
+            if new_speed > 0:
+                print(f"Response: OK  (motorSpeed now = {new_speed})")
+            else:
+                print("Response: OK")
 
         elif cmd == RESP_STATUS:
             state        = pkt['params'][0]
@@ -265,11 +278,11 @@ def handleUserInput(line):
     elif line == 'a':
         if isEstopActive(): print("Refused: E-Stop is active"); return
         print("Sending LEFT command...")
-        sendCommand(COMMAND_RIGHT)   # swapped: a key turns right physically
+        sendCommand(COMMAND_RIGHT)   # swapped: a turns right physically
     elif line == 'd':
         if isEstopActive(): print("Refused: E-Stop is active"); return
         print("Sending RIGHT command...")
-        sendCommand(COMMAND_LEFT)    # swapped: d key turns left physically
+        sendCommand(COMMAND_LEFT)    # swapped: d turns left physically
     elif line == '+':
         print("Sending SPEED UP command...")
         sendCommand(COMMAND_SPEED, params=[1])
