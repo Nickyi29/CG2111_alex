@@ -41,13 +41,15 @@
 
 // =============================================================
 // E-Stop + speed + direction state
+// NOTE: direction constants (STOP, GO, BACK, CW, CCW) come
+//       from the dir enum defined in robotlib.ino
 // =============================================================
 
 volatile TState        buttonState     = STATE_RUNNING;
 volatile bool          stateChanged    = false;
 volatile unsigned long lastButtonIsrMs = 0;
 volatile uint8_t       motorSpeed      = 150;
-volatile uint8_t       currentDir      = STOP_DIR;  // tracks active direction for live speed update
+volatile uint8_t       currentDir      = STOP;   // FIX: was STOP_DIR, robotlib uses STOP
 
 ISR(INT4_vect) {
     unsigned long now = millis();
@@ -136,7 +138,7 @@ static void handleCommand(const TPacket *cmd) {
             buttonState  = STATE_STOPPED;
             stateChanged = false;
             sei();
-            currentDir = STOP_DIR;
+            currentDir = STOP;   // FIX: was STOP_DIR
             stop();
             TPacket pkt;
             memset(&pkt, 0, sizeof(pkt));
@@ -199,8 +201,8 @@ static void handleCommand(const TPacket *cmd) {
             if (newSpeed < 50)  newSpeed = 50;   // floor: prevent motor stall
             if (newSpeed > 255) newSpeed = 255;
             motorSpeed = (uint8_t)newSpeed;
-            // immediately re-apply if robot is already moving
-            if (buttonState != STATE_STOPPED && currentDir != STOP_DIR) {
+            // immediately re-apply if robot is currently moving
+            if (buttonState != STATE_STOPPED && currentDir != STOP) {  // FIX: was STOP_DIR
                 move(motorSpeed, currentDir);
             }
             sendResponse(RESP_OK, motorSpeed);
@@ -235,9 +237,9 @@ void setup() {
     TCS_CTRL_PORT |=  (1 << TCS_S0_BIT);
     TCS_CTRL_PORT &= ~(1 << TCS_S1_BIT);
 
-    // E-Stop input with pull-up enabled
+    // E-Stop input — pull-up enabled to prevent floating pin
     ESTOP_DDR  &= ~(1 << ESTOP_BIT);
-    ESTOP_PORT |=  (1 << ESTOP_BIT);   // pull-up ON — prevents floating pin
+    ESTOP_PORT |=  (1 << ESTOP_BIT);
 
     // INT4 on any logical change
     EICRB &= ~((1 << ISC41) | (1 << ISC40));
