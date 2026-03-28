@@ -60,20 +60,20 @@ MAX_DISTANCE_MM = 12000
 # Rotate all LIDAR readings by this many degrees before feeding them to SLAM.
 # Use this to align the LIDAR's "forward" direction with the robot's forward
 # direction.
-#
+
 # The raw RPLidar angles (clockwise) are first negated to convert to the
 # counter-clockwise convention used by BreezySLAM, then this offset is added.
-#
+
 # Direction convention (counter-clockwise, viewed from above):
-#   LIDAR_OFFSET_DEG = 0    - LIDAR forward (0 deg) = robot forward
-#   LIDAR_OFFSET_DEG = 90   - LIDAR forward is 90 deg CCW from robot forward
-#                              (LIDAR connector faces robot's right side)
-#   LIDAR_OFFSET_DEG = 180  - LIDAR is mounted backwards
-#   LIDAR_OFFSET_DEG = -90  - LIDAR forward is 90 deg CW from robot forward
-#
+# LIDAR_OFFSET_DEG = 0   - LIDAR forward (0 deg) = robot forward
+# LIDAR_OFFSET_DEG = 90  - LIDAR forward is 90 deg CCW from robot forward
+#                          (LIDAR connector faces robot's right side)
+# LIDAR_OFFSET_DEG = 180 - LIDAR is mounted backwards
+# LIDAR_OFFSET_DEG = -90 - LIDAR forward is 90 deg CW from robot forward
+
 # To find the correct value: stand behind the robot looking forward, and
 # measure the CCW angle from the robot's forward to the LIDAR's forward.
-#
+
 # The default of 0 assumes the LIDAR's forward direction matches the robot's.
 LIDAR_OFFSET_DEG = 0
 
@@ -82,12 +82,12 @@ LIDAR_OFFSET_DEG = 0
 # ===========================================================================
 
 # Minimum number of valid distance readings in a scan for it to be used for
-# a full SLAM update.  If a scan has fewer valid points we reuse the previous
-# good scan instead.  Increase this if the map is noisy; decrease it if the
+# a full SLAM update. If a scan has fewer valid points we reuse the previous
+# good scan instead. Increase this if the map is noisy; decrease it if the
 # robot is in a sparse environment.
 MIN_VALID_POINTS = 150
 
-# Number of scans to skip at startup.  The LIDAR motor needs a few rotations
+# Number of scans to skip at startup. The LIDAR motor needs a few rotations
 # to reach full speed; early scans are noisier than steady-state scans.
 INITIAL_ROUNDS_SKIP = 5
 
