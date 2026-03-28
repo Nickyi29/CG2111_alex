@@ -31,53 +31,24 @@ Student tasks (Activity 3)
 
 from .net_utils import TCPServer, sendTPacketFrame, recvTPacketFrame
 
+SECOND_TERM_PORT = 65432
+SECOND_TERM_TIMEOUT = 30
 
-# ============================================================
-# Configuration
-# ============================================================
+_st_server = None
+_st_conn = None
 
-SECOND_TERM_PORT    = 65432   # TCP port second_terminal.py connects to
-SECOND_TERM_TIMEOUT = 30      # Seconds to wait for second_terminal.py to connect
-
-
-# ============================================================
-# Module state  (do not modify)
-# ============================================================
-
-_st_server = None   # TCPServer waiting for second_terminal.py
-_st_conn   = None   # Active client socket from second_terminal.py
-
-
-# ============================================================
-# Second terminal relay
-# ============================================================
 
 def onPacketReceived(raw_frame: bytes):
-    """Forward a raw TPacket frame to second_terminal.py.
-
-    Call this after printPacket() in pi_sensor.py's receive loop.
-
-    Args:
-        raw_frame: the complete framed packet (MAGIC + TPacket + checksum)
-                   just received from the Arduino.
-    """
     global _st_conn
 
     if _st_conn is not None:
         ok = sendTPacketFrame(_st_conn, raw_frame)
         if not ok:
-            print("[relay] Second terminal disconnected (send failed).")
+            print('[relay] Second terminal disconnected (send failed).')
             _st_conn = None
 
 
 def checkSecondTerminal(serial_port):
-    """Receive an incoming command from second_terminal.py and relay it to the Arduino.
-
-    Call this once per iteration of the main loop in pi_sensor.py.
-
-    Args:
-        serial_port: the open serial.Serial object for the Arduino.
-    """
     global _st_conn
 
     if not (_st_conn and _st_server and _st_server.hasData()):
@@ -87,39 +58,27 @@ def checkSecondTerminal(serial_port):
     if frame is not None:
         serial_port.write(frame)
     else:
-        print("[relay] Second terminal disconnected.")
+        print('[relay] Second terminal disconnected.')
         _st_conn = None
 
 
-# ============================================================
-# Lifecycle
-# ============================================================
-
 def start():
-    """Start the TCP server and wait for second_terminal.py to connect.
-
-    Call this once in pi_sensor.py after openSerial(), before the main loop.
-    """
     global _st_server, _st_conn
 
     _st_server = TCPServer(port=SECOND_TERM_PORT)
     if _st_server.start():
-        print("[relay] Waiting for second_terminal.py to connect "
-              "(open a new terminal: python3 second_terminal/second_terminal.py)...")
+        print('[relay] Waiting for second_terminal.py to connect '
+              '(open a new terminal: python3 second_terminal/second_terminal.py)...')
         _st_conn = _st_server.accept(timeout=SECOND_TERM_TIMEOUT)
         if _st_conn is None:
-            print(f"[relay] No second terminal connected within {SECOND_TERM_TIMEOUT}s. Continuing without it.")
+            print(f'[relay] No second terminal connected within {SECOND_TERM_TIMEOUT}s. Continuing without it.')
 
 
 def shutdown():
-    """Close all network connections.
-
-    Call this in the finally block of pi_sensor.py's main function.
-    """
     global _st_server
 
     if _st_server:
         _st_server.close()
         _st_server = None
 
-    print("[relay] Shutdown complete.")
+    print('[relay] Shutdown complete.')
