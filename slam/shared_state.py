@@ -4,8 +4,8 @@ shared_state.py - Shared state objects used between the SLAM process and the UI.
 
 ProcessSharedState holds the occupancy map and robot pose in structures that
 can be safely read and written by two separate Python processes:
-  - The SLAM process writes new pose estimates and map data as they are computed.
-  - The UI process reads them to render the map in the terminal.
+- The SLAM process writes new pose estimates and map data as they are computed.
+- The UI process reads them to render the map in the terminal.
 
 The map is stored in a multiprocessing.shared_memory block (1 MB for a
 1000x1000 map) to avoid copying it across the process boundary on every frame.
@@ -32,35 +32,37 @@ class ProcessSharedState:
 
     Fields
     ------
-    shm          - shared memory buffer holding MAP_SIZE_PIXELS^2 bytes
-                   (0=wall, 127=unknown, 255=free per BreezySLAM convention)
-    x_mm         - robot x position in mm
-    y_mm         - robot y position in mm
-    theta_deg    - robot heading in degrees (BreezySLAM convention: CCW from +x)
+    shm - shared memory buffer holding MAP_SIZE_PIXELS^2 bytes
+          (0=wall, 127=unknown, 255=free per BreezySLAM convention)
+    x_mm - robot x position in mm
+    y_mm - robot y position in mm
+    theta_deg - robot heading in degrees (BreezySLAM convention: CCW from +x)
     valid_points - number of valid LIDAR readings in the most recent scan
-    rounds_seen  - total number of LIDAR rotations processed so far
-    map_version  - incremented each time the map is updated (use to skip redraws)
+    rounds_seen - total number of LIDAR rotations processed so far
+    map_version - incremented each time the map is updated (use to skip redraws)
     pose_version - incremented each time the pose is updated
-    connected    - True once the LIDAR is connected and SLAM is running
-    stopped      - True once the SLAM process has exited
-    paused       - set to True from the UI to pause SLAM updates
-    status_note  - short human-readable status string (up to 127 bytes)
+    connected - True once the LIDAR is connected and SLAM is running
+    stopped - True once the SLAM process has exited
+    paused - set to True from the UI to pause SLAM updates
+    status_note - short human-readable status string (up to 127 bytes)
     error_message - error description if the SLAM process encountered a problem
-    stop_event   - set this from the UI to ask the SLAM process to exit
+    stop_event - set this from the UI to ask the SLAM process to exit
 
     IMPROVEMENT 2 & 3 (path tracking):
-    path_x       - ring buffer of robot x positions (mm), length MAX_PATH_POINTS
-    path_y       - ring buffer of robot y positions (mm), length MAX_PATH_POINTS
-    path_count   - number of valid entries in the ring buffer (up to MAX_PATH_POINTS)
-    path_head    - index of the next write slot (oldest entry is at
-                   (path_head - path_count) % MAX_PATH_POINTS)
+    path_x - ring buffer of robot x positions (mm), length MAX_PATH_POINTS
+    path_y - ring buffer of robot y positions (mm), length MAX_PATH_POINTS
+    path_count - number of valid entries in the ring buffer (up to MAX_PATH_POINTS)
+    path_head - index of the next write slot (oldest entry is at
+                (path_head - path_count) % MAX_PATH_POINTS)
     """
 
     def __init__(self):
         # Allocate shared memory for the occupancy map.
         self.shm = multiprocessing.shared_memory.SharedMemory(
-            create=True, size=MAP_SIZE_PIXELS * MAP_SIZE_PIXELS,
+            create=True,
+            size=MAP_SIZE_PIXELS * MAP_SIZE_PIXELS,
         )
+
         # Initialise all cells to "unknown".
         for i in range(MAP_SIZE_PIXELS * MAP_SIZE_PIXELS):
             self.shm.buf[i] = UNKNOWN_BYTE
@@ -90,14 +92,11 @@ class ProcessSharedState:
 
         # ------------------------------------------------------------------
         # IMPROVEMENT 2 & 3: path ring buffer
-        # The SLAM process appends one (x_mm, y_mm) entry every time the
-        # robot moves at least PATH_MIN_DIST_MM from the last recorded point.
-        # The UI reads these to draw a breadcrumb trail on the map.
         # ------------------------------------------------------------------
-        self.path_x     = multiprocessing.Array(ctypes.c_double, MAX_PATH_POINTS)
-        self.path_y     = multiprocessing.Array(ctypes.c_double, MAX_PATH_POINTS)
+        self.path_x = multiprocessing.Array(ctypes.c_double, MAX_PATH_POINTS)
+        self.path_y = multiprocessing.Array(ctypes.c_double, MAX_PATH_POINTS)
         self.path_count = multiprocessing.Value(ctypes.c_int, 0)
-        self.path_head  = multiprocessing.Value(ctypes.c_int, 0)
+        self.path_head = multiprocessing.Value(ctypes.c_int, 0)
 
     # ------------------------------------------------------------------
     # Text field helpers
@@ -133,12 +132,15 @@ class ProcessSharedState:
         count = min(self.path_count.value, MAX_PATH_POINTS)
         if count == 0:
             return []
+
         head = self.path_head.value
-        # Oldest entry is at (head - count) % MAX_PATH_POINTS.
         start = (head - count) % MAX_PATH_POINTS
+
         return [
-            (self.path_x[(start + i) % MAX_PATH_POINTS],
-             self.path_y[(start + i) % MAX_PATH_POINTS])
+            (
+                self.path_x[(start + i) % MAX_PATH_POINTS],
+                self.path_y[(start + i) % MAX_PATH_POINTS],
+            )
             for i in range(count)
         ]
 
@@ -147,8 +149,10 @@ class ProcessSharedState:
     # ------------------------------------------------------------------
 
     def cleanup(self):
-        """Release the shared memory block.  Call this in the UI process
-        after the SLAM process has exited."""
+        """Release the shared memory block.
+
+        Call this in the UI process after the SLAM process has exited.
+        """
         try:
             self.shm.close()
             self.shm.unlink()
