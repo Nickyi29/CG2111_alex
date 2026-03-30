@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-Studio 13: Sensor Mini-Project
+Studio 13 / 16
 Raspberry Pi Sensor Interface — pi_sensor.py
 
-Updated to work with the second terminal relay for Studio 16.
+Updated to integrate the second terminal relay properly:
+- Starts the relay TCP server.
+- Forwards every received Arduino TPacket to second_terminal.py.
+- Checks once per loop for incoming second-terminal packets.
 """
 
 import struct
@@ -25,7 +28,7 @@ from second_terminal import relay
 # SERIAL PORT SETUP
 # ----------------------------------------------------------------
 
-PORT = "/dev/ttyACM0"
+PORT = "/dev/ttyACM0"   # change to /dev/ttyUSB0 if needed
 BAUDRATE = 9600
 
 _ser = None
@@ -70,16 +73,12 @@ STATE_STOPPED = 1
 
 MAX_STR_LEN = 32
 PARAMS_COUNT = 16
-TPACKET_SIZE = 1 + 1 + 2 + MAX_STR_LEN + (PARAMS_COUNT * 4)
+
+TPACKET_SIZE = 1 + 1 + 2 + MAX_STR_LEN + (PARAMS_COUNT * 4)   # = 100
 TPACKET_FMT = f'<BB2x{MAX_STR_LEN}s{PARAMS_COUNT}I'
 
 MAGIC = b'\xDE\xAD'
-FRAME_SIZE = len(MAGIC) + TPACKET_SIZE + 1
-
-
-# ----------------------------------------------------------------
-# PACK / UNPACK HELPERS
-# ----------------------------------------------------------------
+FRAME_SIZE = len(MAGIC) + TPACKET_SIZE + 1   # = 103
 
 
 def computeChecksum(data: bytes) -> int:
@@ -94,7 +93,13 @@ def packFrame(packetType, command, data=b'', params=None):
         params = []
     params = list(params) + [0] * (PARAMS_COUNT - len(params))
     data_padded = (data + b'\x00' * MAX_STR_LEN)[:MAX_STR_LEN]
-    packet_bytes = struct.pack(TPACKET_FMT, packetType, command, data_padded, *params[:PARAMS_COUNT])
+    packet_bytes = struct.pack(
+        TPACKET_FMT,
+        packetType,
+        command,
+        data_padded,
+        *params[:PARAMS_COUNT]
+    )
     checksum = computeChecksum(packet_bytes)
     return MAGIC + packet_bytes + bytes([checksum])
 
@@ -136,6 +141,7 @@ def receiveFrame():
         cs_byte = _ser.read(1)
         if not cs_byte:
             return None
+
         if cs_byte[0] != computeChecksum(raw):
             continue
 
@@ -162,7 +168,6 @@ def isEstopActive():
 # ----------------------------------------------------------------
 # PACKET DISPLAY
 # ----------------------------------------------------------------
-
 
 def printPacket(pkt):
     global _estop_state
@@ -208,7 +213,6 @@ def printPacket(pkt):
 # ----------------------------------------------------------------
 # ACTIVITY 2: COLOR SENSOR
 # ----------------------------------------------------------------
-
 
 def handleColorCommand():
     if isEstopActive():
@@ -256,7 +260,6 @@ def handleCameraCommand():
 # ACTIVITY 4: LIDAR
 # ----------------------------------------------------------------
 
-
 def handleLidarCommand():
     if isEstopActive():
         print("Refused: E-Stop is active")
@@ -269,47 +272,56 @@ def handleLidarCommand():
 # COMMAND-LINE INTERFACE
 # ----------------------------------------------------------------
 
-
 def handleUserInput(line):
     if line == 'e':
         print("Sending E-Stop command...")
         sendCommand(COMMAND_ESTOP, data=b'This is a debug message')
+
     elif line == 'c':
         handleColorCommand()
+
     elif line == 'p':
         handleCameraCommand()
+
     elif line == 'l':
         handleLidarCommand()
+
     elif line == 'w':
         if isEstopActive():
             print("Refused: E-Stop is active")
             return
         print("Sending FORWARD command...")
         sendCommand(COMMAND_FORWARD)
+
     elif line == 's':
         if isEstopActive():
             print("Refused: E-Stop is active")
             return
         print("Sending BACKWARD command...")
         sendCommand(COMMAND_BACKWARD)
+
     elif line == 'a':
         if isEstopActive():
             print("Refused: E-Stop is active")
             return
         print("Sending LEFT command...")
-        sendCommand(COMMAND_RIGHT)
+        sendCommand(COMMAND_RIGHT)   # swapped: a turns right physically
+
     elif line == 'd':
         if isEstopActive():
             print("Refused: E-Stop is active")
             return
         print("Sending RIGHT command...")
-        sendCommand(COMMAND_LEFT)
+        sendCommand(COMMAND_LEFT)    # swapped: d turns left physically
+
     elif line == '+':
         print("Sending SPEED UP command...")
         sendCommand(COMMAND_SPEED, params=[1])
+
     elif line == '-':
         print("Sending SPEED DOWN command...")
         sendCommand(COMMAND_SPEED, params=[0])
+
     else:
         print(f"Unknown input: '{line}'. Valid: w/a/s/d, e, c, p, l, +/-")
 
@@ -326,8 +338,15 @@ def runCommandInterface():
             pkt = receiveFrame()
             if pkt:
                 printPacket(pkt)
+
+                # IMPORTANT: forward the exact received packet to terminal 2
                 relay.onPacketReceived(
-                    packFrame(pkt['packetType'], pkt['command'], pkt['data'], pkt['params'])
+                    packFrame(
+                        pkt['packetType'],
+                        pkt['command'],
+                        pkt['data'],
+                        pkt['params']
+                    )
                 )
 
         rlist, _, _ = select.select([sys.stdin], [], [], 0)
@@ -336,7 +355,9 @@ def runCommandInterface():
             if line:
                 handleUserInput(line)
 
+        # IMPORTANT: check once per loop for second-terminal packets
         relay.checkSecondTerminal(_ser)
+
         time.sleep(0.05)
 
 
@@ -344,10 +365,13 @@ if __name__ == '__main__':
     openSerial()
     openCamera()
     relay.start()
+
     try:
         runCommandInterface()
+
     except KeyboardInterrupt:
         print("\nExiting.")
+
     finally:
         relay.shutdown()
         closeCamera()
