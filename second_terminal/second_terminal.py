@@ -2,42 +2,8 @@
 """
 Studio 16: Robot Integration
 second_terminal.py - Second operator terminal.
-This terminal connects to pi_sensor.py over TCP.  It:
-  - Displays every TPacket forwarded from the robot (via pi_sensor.py).
-  - Sends a software E-Stop command when you type 'e'.
 
-Architecture
-------------
-   [Arduino] <--USB serial--> [pi_sensor.py] <--TCP--> [second_terminal.py]
-                                (TCP server,               (TCP client,
-                                 port 65432)                localhost:65432)
-
-Run pi_sensor.py FIRST (it starts the TCP server), then run this script.
-Both scripts run on the same Raspberry Pi.
-
-IMPORTANT: Update the TPacket constants below to match your pi_sensor.py.
----------------------------------------------------------------------------
-The packet constants (PACKET_TYPE_*, COMMAND_*, RESP_*, STATE_*, sizes) are
-duplicated here from pi_sensor.py.  They MUST stay in sync with your
-pi_sensor.py (and with the Arduino sketch).  Update them whenever you change
-your protocol.
-
-Tip: consider abstracting all TPacket constants into a shared file (e.g.
-packets.py) that both pi_sensor.py and second_terminal.py import, so there
-is only one place to update them.  You do not have to do this now, but it
-avoids hard-to-find bugs caused by constants getting out of sync.
-
-Commands
---------
-  e   Send a software E-Stop to the robot (same as pressing the button).
-  q   Quit.
-
-Usage
------
-    source env/bin/activate
-    python3 second_terminal/second_terminal.py
-
-Press Ctrl+C to exit.
+Updated to match the fixed pi_sensor.py constants and packet format.
 """
 
 import select
@@ -47,8 +13,16 @@ import time
 
 from net_utils import TCPClient, sendTPacketFrame, recvTPacketFrame
 
+# ---------------------------------------------------------------------------
+# Connection settings
+# ---------------------------------------------------------------------------
+
 PI_HOST = 'localhost'
 PI_PORT = 65432
+
+# ---------------------------------------------------------------------------
+# TPacket constants
+# ---------------------------------------------------------------------------
 
 PACKET_TYPE_COMMAND = 0
 PACKET_TYPE_RESPONSE = 1
@@ -87,18 +61,27 @@ def _computeChecksum(data: bytes) -> int:
 
 def _packFrame(packetType, command, data=b'', params=None):
     if params is None:
-        params = [0] * PARAMS_COUNT
+        params = []
+    params = list(params) + [0] * (PARAMS_COUNT - len(params))
     data_padded = (data + b'\x00' * MAX_STR_LEN)[:MAX_STR_LEN]
-    packet_bytes = struct.pack(TPACKET_FMT, packetType, command, data_padded, *params)
+    packet_bytes = struct.pack(
+        TPACKET_FMT,
+        packetType,
+        command,
+        data_padded,
+        *params[:PARAMS_COUNT]
+    )
     return MAGIC + packet_bytes + bytes([_computeChecksum(packet_bytes)])
 
 
 def _unpackFrame(frame: bytes):
     if len(frame) != FRAME_SIZE or frame[:2] != MAGIC:
         return None
+
     raw = frame[2:2 + TPACKET_SIZE]
     if frame[-1] != _computeChecksum(raw):
         return None
+
     fields = struct.unpack(TPACKET_FMT, raw)
     return {
         'packetType': fields[0],
@@ -119,26 +102,32 @@ def _printPacket(pkt):
 
     if ptype == PACKET_TYPE_RESPONSE:
         if cmd == RESP_OK:
-            print('[robot] OK')
+            new_speed = pkt['params'][0]
+            pct = round(new_speed / 255 * 100)
+            print(f"[robot] Speed updated -> {new_speed}/255 ({pct}%)")
+
         elif cmd == RESP_STATUS:
             state = pkt['params'][0]
             _estop_active = (state == STATE_STOPPED)
             print(f"[robot] Status: {'STOPPED' if _estop_active else 'RUNNING'}")
+
         elif cmd == RESP_COLOR:
             r = pkt['params'][0]
             g = pkt['params'][1]
             b = pkt['params'][2]
             print(f"[robot] Color: R={r} Hz, G={g} Hz, B={b} Hz")
+
         else:
-            print(f'[robot] Response: unknown command {cmd}')
+            print(f"[robot] Response: unknown command {cmd}")
 
         debug = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
         if debug:
-            print(f'[robot] Debug: {debug}')
+            print(f"[robot] Debug: {debug}")
 
     elif ptype == PACKET_TYPE_MESSAGE:
         msg = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
-        print(f'[robot] Message: {msg}')
+        print(f"[robot] Message: {msg}")
+
     else:
         print(f"[robot] Packet: type={ptype}, cmd={cmd}")
 
@@ -152,9 +141,11 @@ def _handleInput(line: str, client: TCPClient):
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ESTOP)
         sendTPacketFrame(client.sock, frame)
         print('[second_terminal] Sent: E-STOP')
+
     elif line == 'q':
         print('[second_terminal] Quitting.')
         raise KeyboardInterrupt
+
     else:
         print(f"[second_terminal] Unknown: '{line}'. Valid: e (E-Stop) q (quit)")
 
@@ -179,6 +170,7 @@ def run():
                 if frame is None:
                     print('[second_terminal] Connection to pi_sensor.py closed.')
                     break
+
                 pkt = _unpackFrame(frame)
                 if pkt:
                     _printPacket(pkt)
