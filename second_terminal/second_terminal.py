@@ -10,6 +10,7 @@ import select
 import struct
 import sys
 import time
+import ssl
 
 from net_utils import TCPClient, sendTPacketFrame, recvTPacketFrame
 
@@ -19,6 +20,16 @@ from net_utils import TCPClient, sendTPacketFrame, recvTPacketFrame
 
 PI_HOST = 'localhost'
 PI_PORT = 65432
+
+TLS_ENABLED = True
+TLS_CERT_PATH = 'certs/server.crt'
+
+def _make_client_ssl_context():
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_verify_locations(TLS_CERT_PATH)
+    ctx.check_hostname = False
+    return ctx
 
 # ---------------------------------------------------------------------------
 # TPacket constants
@@ -151,7 +162,8 @@ def _handleInput(line: str, client: TCPClient):
 
 
 def run():
-    client = TCPClient(host=PI_HOST, port=PI_PORT)
+    ssl_ctx = _make_client_ssl_context() if TLS_ENABLED else None                                   #sets up TLS handshake b/w first and second device
+    client = TCPClient(host=PI_HOST, port=PI_PORT, ssl_context=ssl_ctx, server_hostname=PI_HOST)
     print(f'[second_terminal] Connecting to pi_sensor.py at {PI_HOST}:{PI_PORT}...')
 
     if not client.connect(timeout=10.0):
