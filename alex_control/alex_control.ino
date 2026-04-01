@@ -4,51 +4,38 @@
  *
  * CHANGES FROM PREVIOUS VERSION:
  *
- *  All pin changes are due to the MH Electronics Motor Shield occupying
- *  D0-D13 and A0-A5 headers on the Mega, leaving only D14-D52 and A8-A15
- *  available for external wiring.
+ *  TCS3200 all 5 pins moved further down to D42-D46 (Port L)
+ *  because wires were still too short to reach D31-D35.
  *
- *  1. E-Stop moved: D2 (PE4/INT4) → D21 (PD0/INT0)
- *     - D2 is under the shield header, inaccessible
- *     - D21 is free, has a proper hardware external interrupt (INT0)
- *     - ISR vector changed: INT4_vect → INT0_vect
- *     - Control registers changed: EICRB/ISC4x → EICRA/ISC0x
+ *  D42 PL7  TCS3200 S0  (was D31 PC6)
+ *  D43 PL6  TCS3200 S1  (was D32 PC5)
+ *  D44 PL5  TCS3200 S2  (was D33 PC4)
+ *  D45 PL4  TCS3200 S3  (was D34 PC3)
+ *  D46 PL3  TCS3200 OUT (was D35 PC2)
  *
- *  2. Servo pins moved: A0-A3 (PF0-PF3) → D22-D25 (PA0-PA3)
- *     - A0-A5 header is occupied by the shield
- *     - D22-D25 = PA0-PA3, no timer/special-function conflicts
- *     - All DDRF/PORTF servo references → DDRA/PORTA
- *     - Timer 4 ISR now bit-bangs PORTA instead of PORTF
+ *  All 5 TCS wires now cluster at D42-D46, physically consecutive.
+ *  D44-D46 are Timer 5 OC pins but Timer 5 is unused — safe as GPIO.
+ *  One DDRL write in setup() configures all TCS pins at once.
  *
- *  3. TCS3200 control pins moved: A4-A7 (PF4-PF7) → D26-D29 (PA4-PA7)
- *     - Shares Port A with servos (PA0-PA3) — one DDRA write sets all 8
- *     - All DDRF/PORTF TCS ctrl references → DDRA/PORTA
- *
- *  4. TCS3200 OUT moved: D22 (PA0) → D30 (PC7)
- *     - D22 is now the base servo pin
- *     - D30 = PC7, free GPIO input, no conflicts
- *     - TCS_OUT references changed to DDRC/PORTC/PINC / PC7
- *
- * Final pin summary:
- *   D21 PD0 INT0   E-Stop button (input, pull-up, any-change ISR)
- *   D22 PA0        Base servo signal (output, Timer 4 bit-bang)
+ * Full pin summary:
+ *   D21 PD0 INT0   E-Stop button
+ *   D22 PA0        Base servo signal
  *   D23 PA1        Shoulder servo signal
  *   D24 PA2        Elbow servo signal
  *   D25 PA3        Gripper servo signal
- *   D26 PA4        TCS3200 S0 (output)
- *   D27 PA5        TCS3200 S1 (output)
- *   D28 PA6        TCS3200 S2 (output)
- *   D29 PA7        TCS3200 S3 (output)
- *   D30 PC7        TCS3200 OUT (input, polled)
+ *   D42 PL7        TCS3200 S0 (output)
+ *   D43 PL6        TCS3200 S1 (output)
+ *   D44 PL5        TCS3200 S2 (output)
+ *   D45 PL4        TCS3200 S3 (output)
+ *   D46 PL3        TCS3200 OUT (input, polled)
  *   D18 PD3 INT3   Left encoder (optional)
  *   D19 PD2 INT2   Right encoder (optional)
- *   D3  PE5 OC3C   Motor M3/M4 PWM — shield internal, Timer 3
- *   D11 PB5 OC1A   Motor M1/M2 PWM — shield internal, Timer 1
+ *   D3  PE5 OC3C   Motor M3/M4 PWM — shield internal
+ *   D11 PB5 OC1A   Motor M1/M2 PWM — shield internal
  *   D4  PG5        Shift reg CLK   — shield internal
  *   D7  PH4        Shift reg OE    — shield internal
  *   D8  PH5        Shift reg DATA  — shield internal
  *   D12 PB6        Shift reg LATCH — shield internal
- *   A8-A15         Free
  */
 
 #include <avr/io.h>
@@ -69,7 +56,6 @@ const int ELBOW_MIN    = 20,  ELBOW_MAX    = 160;
 const int GRIPPER_MIN  = 10,  GRIPPER_MAX  = 90;
 
 // Servo signal pins — D22-D25 = PA0-PA3
-// Bit masks within Port A
 #define BASE_PIN     (1 << PA0)
 #define SHOULDER_PIN (1 << PA1)
 #define ELBOW_PIN    (1 << PA2)
@@ -110,20 +96,19 @@ volatile unsigned int servoTicks[4];
 #define ESTOP_PINR PIND
 #define ESTOP_BIT  PD0
 
-// ---- TCS3200 control: D26-D29 = PA4-PA7 ----
-// Share Port A with servo pins (PA0-PA3) above
-#define TCS_CTRL_DDR  DDRA
-#define TCS_CTRL_PORT PORTA
-#define TCS_S0_BIT    PA4
-#define TCS_S1_BIT    PA5
-#define TCS_S2_BIT    PA6
-#define TCS_S3_BIT    PA7
+// ---- TCS3200 control: D42-D45 = PL7-PL4 (outputs) ----
+#define TCS_CTRL_DDR  DDRL
+#define TCS_CTRL_PORT PORTL
+#define TCS_S0_BIT    PL7
+#define TCS_S1_BIT    PL6
+#define TCS_S2_BIT    PL5
+#define TCS_S3_BIT    PL4
 
-// ---- TCS3200 OUT: D30 = PC7 (input, polled) ----
-#define TCS_OUT_DDR  DDRC
-#define TCS_OUT_PORT PORTC
-#define TCS_OUT_PINR PINC
-#define TCS_OUT_BIT  PC7
+// ---- TCS3200 OUT: D46 = PL3 (input, polled) ----
+#define TCS_OUT_DDR  DDRL
+#define TCS_OUT_PORT PORTL
+#define TCS_OUT_PINR PINL
+#define TCS_OUT_BIT  PL3
 
 // =============================================================
 // State
@@ -141,16 +126,15 @@ volatile uint8_t       currentDir      = DIR_STOP;
 
 ISR(INT0_vect) {
     unsigned long now = millis();
-    if ((unsigned long)(now - lastButtonIsrMs) < 50) return;   // debounce 50 ms
+    if ((unsigned long)(now - lastButtonIsrMs) < 50) return;
     lastButtonIsrMs = now;
 
-    // Button wired with pull-up: pressed = LOW
     uint8_t pressed = (ESTOP_PINR & (1 << ESTOP_BIT)) ? 0 : 1;
 
     if (buttonState == STATE_RUNNING && pressed) {
         buttonState  = STATE_STOPPED;
         stateChanged = true;
-        stop();                     // cut motors immediately in ISR
+        stop();
     } else if (buttonState == STATE_STOPPED && !pressed) {
         buttonState  = STATE_RUNNING;
         stateChanged = true;
@@ -163,15 +147,11 @@ ISR(INT0_vect) {
 
 void updateTicks(void) {
     for (int i = 0; i < 4; i++) {
-        // Map 0-180 deg → 2000-4000 timer ticks (1000 µs – 2000 µs pulse)
-        // Timer 4 runs at 2 MHz (prescaler 8): 1 tick = 0.5 µs
         servoTicks[i] = 2000 + (unsigned int)((long)curPos[i] * 2000 / 180);
     }
 }
 
-// Fires every 20 ms (OCR4A = 40000 @ 2 MHz)
 ISR(TIMER4_COMPA_vect) {
-    // All four servo pins HIGH — start of pulse window
     PORTA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
 
     bool bA = true, sA = true, eA = true, gA = true;
@@ -185,7 +165,7 @@ ISR(TIMER4_COMPA_vect) {
 }
 
 // =============================================================
-// Arm movement — non-blocking, called every loop()
+// Arm movement — non-blocking
 // =============================================================
 
 void processMovement(void) {
@@ -235,7 +215,7 @@ static inline uint8_t readTcsOut(void) {
 
 static uint32_t measureChannelHz(bool s2High, bool s3High) {
     setTcsFilter(s2High, s3High);
-    delayMicroseconds(300);         // settle time after filter switch
+    delayMicroseconds(300);
 
     uint32_t      risingEdges = 0;
     uint8_t       prev        = readTcsOut();
@@ -246,7 +226,7 @@ static uint32_t measureChannelHz(bool s2High, bool s3High) {
         if (!prev && cur) risingEdges++;
         prev = cur;
     }
-    return risingEdges * 10UL;      // Hz = edges × 10 for 100 ms window
+    return risingEdges * 10UL;
 }
 
 static void readColorChannels(uint32_t *r, uint32_t *g, uint32_t *b) {
@@ -264,7 +244,6 @@ static void handleCommand(const TPacket *cmd) {
 
     switch (cmd->command) {
 
-        // -------------------------------------------------------
         case COMMAND_ESTOP: {
             cli();
             buttonState  = STATE_STOPPED;
@@ -283,7 +262,6 @@ static void handleCommand(const TPacket *cmd) {
             break;
         }
 
-        // -------------------------------------------------------
         case COMMAND_COLOR: {
             uint32_t r, g, b;
             readColorChannels(&r, &g, &b);
@@ -300,35 +278,30 @@ static void handleCommand(const TPacket *cmd) {
             break;
         }
 
-        // -------------------------------------------------------
         case COMMAND_FORWARD:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             currentDir = DIR_GO;
             forward(motorSpeed);
             break;
 
-        // -------------------------------------------------------
         case COMMAND_BACKWARD:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             currentDir = DIR_BACK;
             backward(motorSpeed);
             break;
 
-        // -------------------------------------------------------
         case COMMAND_LEFT:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             currentDir = DIR_CCW;
             ccw(motorSpeed);
             break;
 
-        // -------------------------------------------------------
         case COMMAND_RIGHT:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             currentDir = DIR_CW;
             cw(motorSpeed);
             break;
 
-        // -------------------------------------------------------
         case COMMAND_SPEED: {
             int delta    = (cmd->params[0] == 1) ? SPEED_STEP : -SPEED_STEP;
             int newSpeed = (int)motorSpeed + delta;
@@ -341,42 +314,35 @@ static void handleCommand(const TPacket *cmd) {
             break;
         }
 
-        // -------------------------------------------------------
         case COMMAND_ARM_BASE:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[0] = constrain((int)cmd->params[0], BASE_MIN, BASE_MAX);
             break;
 
-        // -------------------------------------------------------
         case COMMAND_ARM_SHOULDER:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[1] = constrain((int)cmd->params[0], SHOULDER_MIN, SHOULDER_MAX);
             break;
 
-        // -------------------------------------------------------
         case COMMAND_ARM_ELBOW:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[2] = constrain((int)cmd->params[0], ELBOW_MIN, ELBOW_MAX);
             break;
 
-        // -------------------------------------------------------
         case COMMAND_ARM_GRIPPER:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[3] = constrain((int)cmd->params[0], GRIPPER_MIN, GRIPPER_MAX);
             break;
 
-        // -------------------------------------------------------
         case COMMAND_ARM_HOME:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             for (int i = 0; i < 4; i++) targetPos[i] = 90;
             break;
 
-        // -------------------------------------------------------
         case COMMAND_ARM_SPEED:
             msPerDeg = (int)cmd->params[0];
             break;
 
-        // -------------------------------------------------------
         default:
             break;
     }
@@ -394,56 +360,51 @@ void setup(void) {
 #endif
 
     // ------------------------------------------------------------------
-    // Port A — servos (PA0-PA3) + TCS3200 control (PA4-PA7), all outputs
-    // One DDRA write configures all 8 bits at once
+    // Port A — servo signal outputs (PA0-PA3 = D22-D25)
     // ------------------------------------------------------------------
-    DDRA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN)  // PA0-PA3
-          | (1 << TCS_S0_BIT) | (1 << TCS_S1_BIT)               // PA4-PA5
-          | (1 << TCS_S2_BIT) | (1 << TCS_S3_BIT);              // PA6-PA7
+    DDRA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
+
+    // ------------------------------------------------------------------
+    // Port L — TCS3200 all on one port (D42-D46 = PL7-PL3)
+    // PL7=S0, PL6=S1, PL5=S2, PL4=S3 as outputs
+    // PL3=OUT as input (no pull-up — sensor drives it actively)
+    // ------------------------------------------------------------------
+    DDRL |=  (1 << TCS_S0_BIT) | (1 << TCS_S1_BIT)
+           | (1 << TCS_S2_BIT) | (1 << TCS_S3_BIT);  // S0-S3 outputs
+    DDRL &= ~(1 << TCS_OUT_BIT);                       // OUT input
+    PORTL &= ~(1 << TCS_OUT_BIT);                      // no pull-up
 
     // 20% output frequency scaling: S0=HIGH, S1=LOW
-    PORTA |=  (1 << TCS_S0_BIT);
-    PORTA &= ~(1 << TCS_S1_BIT);
+    PORTL |=  (1 << TCS_S0_BIT);
+    PORTL &= ~(1 << TCS_S1_BIT);
 
     // ------------------------------------------------------------------
-    // TCS3200 OUT — D30 = PC7 (input, no pull-up)
-    // ------------------------------------------------------------------
-    TCS_OUT_DDR  &= ~(1 << TCS_OUT_BIT);
-    TCS_OUT_PORT &= ~(1 << TCS_OUT_BIT);
-
-    // ------------------------------------------------------------------
-    // E-Stop — D21 = PD0 = INT0
-    // Input with pull-up; ISR fires on any logical change
+    // E-Stop — D21 = PD0 = INT0, input with pull-up, any-change ISR
     // ------------------------------------------------------------------
     ESTOP_DDR  &= ~(1 << ESTOP_BIT);
-    ESTOP_PORT |=  (1 << ESTOP_BIT);   // enable internal pull-up
+    ESTOP_PORT |=  (1 << ESTOP_BIT);
 
-    // INT0: any logical change → ISC01=0, ISC00=1
     EICRA &= ~((1 << ISC01) | (1 << ISC00));
     EICRA |=  (1 << ISC00);
     EIMSK |=  (1 << INT0);
 
     // ------------------------------------------------------------------
     // Timer 4: 16-bit CTC, 20 ms period for servo PWM
-    // 16 MHz / prescaler 8 = 2 MHz → 1 tick = 0.5 µs
-    // OCR4A = 40 000 → period = 40 000 × 0.5 µs = 20 ms ✓
     // ------------------------------------------------------------------
     cli();
     TCCR4A = 0;
     TCCR4B = 0;
     TCNT4  = 0;
     OCR4A  = 40000;
-    TCCR4B |= (1 << WGM42);   // CTC mode (top = OCR4A)
-    TCCR4B |= (1 << CS41);    // prescaler 8
-    TIMSK4 |= (1 << OCIE4A);  // enable compare-match A interrupt
+    TCCR4B |= (1 << WGM42);
+    TCCR4B |= (1 << CS41);
+    TIMSK4 |= (1 << OCIE4A);
     sei();
 
     updateTicks();
 
     // ------------------------------------------------------------------
-    // Bare-metal motor driver
-    // Sets up Timer 1 (OC1A/D11) + Timer 3 (OC3C/D3) + 74HC595 shift reg
-    // All driven through shield PCB traces — no external wiring needed
+    // Bare-metal motor driver (Timer 1 + Timer 3 + shift register)
     // ------------------------------------------------------------------
     motorsInit();
 }
@@ -453,10 +414,8 @@ void setup(void) {
 // =============================================================
 
 void loop(void) {
-    // Non-blocking servo stepping — must run every iteration
     processMovement();
 
-    // Forward E-Stop state changes to Pi
     if (stateChanged) {
         cli();
         TState state = buttonState;
@@ -465,7 +424,6 @@ void loop(void) {
         sendStatus(state);
     }
 
-    // Receive and handle one TPacket per loop iteration if available
     TPacket incoming;
     if (receiveFrame(&incoming)) {
         handleCommand(&incoming);
