@@ -1,9 +1,12 @@
 /*
  * packets.h
- * Studio 13: Sensor Mini-Project
+ * CG2111A — Alex Robot
  *
  * TPacket protocol: enums, struct, and framing constants.
- * This file must be kept in sync with the constants in pi_sensor.py.
+ * Must be kept in sync with pi_sensor.py and second_terminal.py.
+ *
+ * CHANGES FROM ORIGINAL:
+ *   - Fixed missing commas in TCommandType enum (caused compile error)
  */
 
 #pragma once
@@ -21,19 +24,19 @@ typedef enum {
 } TPacketType;
 
 typedef enum {
-    COMMAND_ESTOP = 0,
-    COMMAND_COLOR = 1,
-    COMMAND_FORWARD = 2,
-    COMMAND_BACKWARD = 3,
-    COMMAND_LEFT = 4,
-    COMMAND_RIGHT = 5,
-    COMMAND_SPEED = 6
-    COMMAND_ARM_BASE     = 7
-    COMMAND_ARM_SHOULDER = 8
-    COMMAND_ARM_ELBOW    = 9
-    COMMAND_ARM_GRIPPER  = 10
-    COMMAND_ARM_HOME     = 11
-    COMMAND_ARM_SPEED    = 12
+    COMMAND_ESTOP        = 0,
+    COMMAND_COLOR        = 1,
+    COMMAND_FORWARD      = 2,
+    COMMAND_BACKWARD     = 3,
+    COMMAND_LEFT         = 4,
+    COMMAND_RIGHT        = 5,
+    COMMAND_SPEED        = 6,
+    COMMAND_ARM_BASE     = 7,
+    COMMAND_ARM_SHOULDER = 8,
+    COMMAND_ARM_ELBOW    = 9,
+    COMMAND_ARM_GRIPPER  = 10,
+    COMMAND_ARM_HOME     = 11,
+    COMMAND_ARM_SPEED    = 12,
 } TCommandType;
 
 typedef enum {
