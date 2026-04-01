@@ -46,6 +46,12 @@ COMMAND_BACKWARD = 3
 COMMAND_LEFT = 4
 COMMAND_RIGHT = 5
 COMMAND_SPEED = 6
+COMMAND_ARM_BASE     = 7
+COMMAND_ARM_SHOULDER = 8
+COMMAND_ARM_ELBOW    = 9
+COMMAND_ARM_GRIPPER  = 10
+COMMAND_ARM_HOME     = 11
+COMMAND_ARM_SPEED    = 12
 
 RESP_OK = 0
 RESP_STATUS = 1
@@ -157,8 +163,57 @@ def _handleInput(line: str, client: TCPClient):
         print('[second_terminal] Quitting.')
         raise KeyboardInterrupt
 
+    elif line == 'h':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_HOME)
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: ARM HOME')
+
+    elif line == 'j':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_BASE, params=[60])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: BASE LEFT')
+
+    elif line == 'r':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_BASE, params=[120])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: BASE RIGHT')
+
+    elif line == 'i':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[120])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: SHOULDER UP')
+
+    elif line == 'k':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[60])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: SHOULDER DOWN')
+
+    elif line == 'u':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_ELBOW, params=[120])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: ELBOW UP')
+
+    elif line == 'o':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_ELBOW, params=[60])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: ELBOW DOWN')
+
+    elif line == 'n':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[90])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: GRIPPER OPEN')
+
+    elif line == 'm':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[10])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: GRIPPER CLOSE')
+
+    elif line == 'q':
+        print('[second_terminal] Quitting.')
+        raise KeyboardInterrupt
+
     else:
-        print(f"[second_terminal] Unknown: '{line}'. Valid: e (E-Stop) q (quit)")
+        print(f"[second_terminal] Unknown: '{line}'. Valid: e=estop h=home j/r=base i/k=shoulder u/o=elbow n/m=gripper q=quit")
 
 
 def run():

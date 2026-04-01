@@ -12,6 +12,23 @@
 #include "packets.h"
 #include "serial_driver.h"
 
+// Arm state — from Mini-Project 1
+const int BASE_MIN = 30,     BASE_MAX = 150;
+const int SHOULDER_MIN = 40, SHOULDER_MAX = 140;
+const int ELBOW_MIN = 20,    ELBOW_MAX = 160;
+const int GRIPPER_MIN = 10,  GRIPPER_MAX = 90;
+
+#define BASE_PIN     (1 << 0)
+#define SHOULDER_PIN (1 << 1)
+#define ELBOW_PIN    (1 << 2)
+#define GRIPPER_PIN  (1 << 3)
+
+volatile int curPos[4]          = {90, 90, 90, 90};
+int          targetPos[4]       = {90, 90, 90, 90};
+int          msPerDeg           = 10;
+unsigned long lastMoveTime[4]   = {0, 0, 0, 0};
+volatile unsigned int servoTicks[4];
+
 // Direction constants — must match dir enum values in robotlib.ino
 // Defined here as #define so they are available before robotlib.ino is merged
 #define DIR_STOP 0
@@ -130,6 +147,36 @@ static void readColorChannels(uint32_t *r, uint32_t *g, uint32_t *b) {
     *b = measureChannelHz(0, 1);  // blue
 }
 
+void updateTicks() {
+    for (int i = 0; i < 4; i++) {
+        servoTicks[i] = 2000 + (unsigned int)((long)curPos[i] * 2000 / 180);
+    }
+}
+
+void processMovement() {
+    unsigned long now = millis();
+    for (int i = 0; i < 4; i++) {
+        if (curPos[i] != targetPos[i] &&
+            (now - lastMoveTime[i] >= (unsigned long)msPerDeg)) {
+            if (targetPos[i] > curPos[i]) curPos[i]++;
+            else curPos[i]--;
+            lastMoveTime[i] = now;
+            updateTicks();
+        }
+    }
+}
+
+ISR(TIMER1_COMPA_vect) {
+    PORTC |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
+    bool bActive = true, sActive = true, eActive = true, gActive = true;
+    while (bActive || sActive || eActive || gActive) {
+        unsigned int elapsed = TCNT1;
+        if (elapsed >= servoTicks[0]) { PORTC &= ~BASE_PIN;     bActive = false; }
+        if (elapsed >= servoTicks[1]) { PORTC &= ~SHOULDER_PIN; sActive = false; }
+        if (elapsed >= servoTicks[2]) { PORTC &= ~ELBOW_PIN;    eActive = false; }
+        if (elapsed >= servoTicks[3]) { PORTC &= ~GRIPPER_PIN;  gActive = false; }
+    }
+}
 // =============================================================
 // Command handler
 // =============================================================
@@ -215,9 +262,48 @@ static void handleCommand(const TPacket *cmd) {
             sendResponse(RESP_OK, motorSpeed);
             break;
         }
+        case COMMAND_ARM_BASE:
+        if (buttonState == STATE_STOPPED) {
+            sendStatus(STATE_STOPPED);
+            break;
+        }
+        targetPos[0] = constrain((int)cmd->params[0], BASE_MIN, BASE_MAX);
+        break;
+
+        case COMMAND_ARM_SHOULDER:
+        if (buttonState == STATE_STOPPED) {
+            sendStatus(STATE_STOPPED); break;
+        }
+        targetPos[1] = constrain((int)cmd->params[0], SHOULDER_MIN, SHOULDER_MAX);
+        break;
+
+        case COMMAND_ARM_ELBOW:
+        if (buttonState == STATE_STOPPED) {
+            sendStatus(STATE_STOPPED); break;
+        }
+        targetPos[2] = constrain((int)cmd->params[0], ELBOW_MIN, ELBOW_MAX);
+        break;
+
+        case COMMAND_ARM_GRIPPER:
+        if (buttonState == STATE_STOPPED) {
+            sendStatus(STATE_STOPPED); break;
+        }
+        targetPos[3] = constrain((int)cmd->params[0], GRIPPER_MIN, GRIPPER_MAX);
+        break;
+        
+        case COMMAND_ARM_HOME:
+        if (buttonState == STATE_STOPPED) {
+            sendStatus(STATE_STOPPED); break;
+        }
+        for (int i = 0; i < 4; i++) targetPos[i] = 90;
+        break;
+        
+        case COMMAND_ARM_SPEED:
+        msPerDeg = (int)cmd->params[0];
+        break;
 
         default:
-            break;
+        break;
     }
 }
 
@@ -251,9 +337,22 @@ void setup() {
     EIMSK |=  (1 << INT4);
 
     sei();
+    // Arm pin setup
+    DDRC |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
+    // Timer 1 for servo PWM
+    TCCR1A = 0; TCCR1B = 0; TCNT1 = 0;
+    OCR1A = 40000;
+    TCCR1B |= (1 << WGM12);
+    TCCR1B |= (1 << CS11);
+    TIMSK1 |= (1 << OCIE1A);
+
+updateTicks();
 }
 
 void loop() {
+    // arm movement — runs every iteration
+    processMovement();
+
     if (stateChanged) {
         cli();
         TState state = buttonState;
@@ -266,4 +365,5 @@ void loop() {
     if (receiveFrame(&incoming)) {
         handleCommand(&incoming);
     }
+
 }
