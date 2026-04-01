@@ -1,0 +1,77 @@
+
+SETUP
+-----
+1. Make sure pi_sensor.py is already running on the Raspberry Pi.
+2. Ensure you have certs/server.crt in the same directory as second_terminal.py.
+3. Set PI_HOST in second_terminal.py to the Pi's Tailscale IP address.
+4. Run: python3 second_terminal.py
+
+
+- The arm will NOT move if E-Stop is active.
+- Always home the arm (h) before starting a session.
+- The arm moves smoothly to target — it does NOT snap instantly.
+- All arm movement is blocked while E-Stop is active.
+- Press e to activate E-Stop in an emergency.
+  The robot will stop immediately.
+  Press e again (from Operator 1) to resume.
+
+----------------------------------------------------
+E-STOP
+----------------------------------------------------
+  e       Activate E-Stop (stops robot + arm immediately)
+
+----------------------------------------------------
+ARM CONTROLS
+----------------------------------------------------
+
+  h       Home — moves all joints to 90 degrees (neutral position)
+
+  BASE (rotates arm left/right):
+  j       Base rotate LEFT  (moves to 60 degrees)
+  r       Base rotate RIGHT (moves to 120 degrees)
+  Range:  30 to 150 degrees
+
+  SHOULDER (raises/lowers upper arm):
+  i       Shoulder UP   (moves to 120 degrees)
+  k       Shoulder DOWN (moves to 60 degrees)
+  Range:  40 to 140 degrees
+
+  ELBOW (raises/lowers forearm):
+  u       Elbow UP   (moves to 120 degrees)
+  o       Elbow DOWN (moves to 60 degrees)
+  Range:  20 to 160 degrees
+
+  GRIPPER (opens/closes claw):
+  n       Gripper OPEN  (moves to 90 degrees)
+  m       Gripper CLOSE (moves to 10 degrees)
+  Range:  10 to 90 degrees
+
+----------------------------------------------------
+QUIT
+----------------------------------------------------
+  q       Quit second_terminal.py
+
+----------------------------------------------------
+INCOMING ROBOT STATUS (displayed automatically)
+----------------------------------------------------
+  The terminal will print robot status automatically:
+  - [robot] Status: RUNNING / STOPPED
+  - [robot] Speed updated -> X/255 (Y%)
+  - [robot] Color: R=X Hz, G=Y Hz, B=Z Hz
+  - [robot] Debug: <message from Arduino>
+
+----------------------------------------------------
+TYPICAL PICK-UP SEQUENCE
+----------------------------------------------------
+1. h         — home the arm first
+2. j or r    — rotate base to face the object
+3. i / k     — adjust shoulder height
+4. u / o     — adjust elbow to reach object
+5. n         — open gripper
+6. o         — lower elbow over object
+7. m         — close gripper to grab
+8. i         — lift shoulder up
+9. r or j    — rotate base to delivery position
+10. n        — open gripper to drop
+
+====================================================
