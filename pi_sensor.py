@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Studio 13 / 16
-Raspberry Pi Sensor Interface — pi_sensor.py
+pi_sensor.py
+CG2111A — Alex Robot
+Operator 1: robot movement, sensors, relay host.
 
-Updated to integrate the second terminal relay properly:
-- Starts the relay TCP server.
-- Forwards every received Arduino TPacket to second_terminal.py.
-- Checks once per loop for incoming second-terminal packets.
+CHANGES FROM ORIGINAL:
+  - Added arm command constants (COMMAND_ARM_BASE through COMMAND_ARM_SPEED)
+    to match packets.h and second_terminal.py
 """
 
 import struct
@@ -28,7 +28,7 @@ from second_terminal import relay
 # SERIAL PORT SETUP
 # ----------------------------------------------------------------
 
-PORT = "/dev/ttyACM0"   # change to /dev/ttyUSB0 if needed
+PORT     = "/dev/ttyACM0"
 BAUDRATE = 9600
 
 _ser = None
@@ -52,33 +52,39 @@ def closeSerial():
 # TPACKET CONSTANTS — must stay in sync with packets.h
 # ----------------------------------------------------------------
 
-PACKET_TYPE_COMMAND = 0
+PACKET_TYPE_COMMAND  = 0
 PACKET_TYPE_RESPONSE = 1
-PACKET_TYPE_MESSAGE = 2
+PACKET_TYPE_MESSAGE  = 2
 
-COMMAND_ESTOP = 0
-COMMAND_COLOR = 1
-COMMAND_FORWARD = 2
-COMMAND_BACKWARD = 3
-COMMAND_LEFT = 4
-COMMAND_RIGHT = 5
-COMMAND_SPEED = 6
+COMMAND_ESTOP        = 0
+COMMAND_COLOR        = 1
+COMMAND_FORWARD      = 2
+COMMAND_BACKWARD     = 3
+COMMAND_LEFT         = 4
+COMMAND_RIGHT        = 5
+COMMAND_SPEED        = 6
+COMMAND_ARM_BASE     = 7
+COMMAND_ARM_SHOULDER = 8
+COMMAND_ARM_ELBOW    = 9
+COMMAND_ARM_GRIPPER  = 10
+COMMAND_ARM_HOME     = 11
+COMMAND_ARM_SPEED    = 12
 
-RESP_OK = 0
+RESP_OK     = 0
 RESP_STATUS = 1
-RESP_COLOR = 2
+RESP_COLOR  = 2
 
 STATE_RUNNING = 0
 STATE_STOPPED = 1
 
-MAX_STR_LEN = 32
+MAX_STR_LEN  = 32
 PARAMS_COUNT = 16
 
-TPACKET_SIZE = 1 + 1 + 2 + MAX_STR_LEN + (PARAMS_COUNT * 4)   # = 100
-TPACKET_FMT = f'<BB2x{MAX_STR_LEN}s{PARAMS_COUNT}I'
+TPACKET_SIZE = 1 + 1 + 2 + MAX_STR_LEN + (PARAMS_COUNT * 4)
+TPACKET_FMT  = f'<BB2x{MAX_STR_LEN}s{PARAMS_COUNT}I'
 
-MAGIC = b'\xDE\xAD'
-FRAME_SIZE = len(MAGIC) + TPACKET_SIZE + 1   # = 103
+MAGIC      = b'\xDE\xAD'
+FRAME_SIZE = len(MAGIC) + TPACKET_SIZE + 1
 
 
 def computeChecksum(data: bytes) -> int:
@@ -91,7 +97,7 @@ def computeChecksum(data: bytes) -> int:
 def packFrame(packetType, command, data=b'', params=None):
     if params is None:
         params = []
-    params = list(params) + [0] * (PARAMS_COUNT - len(params))
+    params      = list(params) + [0] * (PARAMS_COUNT - len(params))
     data_padded = (data + b'\x00' * MAX_STR_LEN)[:MAX_STR_LEN]
     packet_bytes = struct.pack(
         TPACKET_FMT,
@@ -108,9 +114,9 @@ def unpackTPacket(raw):
     fields = struct.unpack(TPACKET_FMT, raw)
     return {
         'packetType': fields[0],
-        'command': fields[1],
-        'data': fields[2],
-        'params': list(fields[3:]),
+        'command':    fields[1],
+        'data':       fields[2],
+        'params':     list(fields[3:]),
     }
 
 
@@ -173,7 +179,7 @@ def printPacket(pkt):
     global _estop_state
 
     ptype = pkt['packetType']
-    cmd = pkt['command']
+    cmd   = pkt['command']
 
     if ptype == PACKET_TYPE_RESPONSE:
         if cmd == RESP_OK:
@@ -182,12 +188,9 @@ def printPacket(pkt):
             print(f"Speed updated -> {new_speed}/255 ({pct}%)")
 
         elif cmd == RESP_STATUS:
-            state = pkt['params'][0]
+            state        = pkt['params'][0]
             _estop_state = state
-            if state == STATE_RUNNING:
-                print("Status: RUNNING")
-            else:
-                print("Status: STOPPED")
+            print("Status: RUNNING" if state == STATE_RUNNING else "Status: STOPPED")
 
         elif cmd == RESP_COLOR:
             r = pkt['params'][0]
@@ -211,7 +214,7 @@ def printPacket(pkt):
 
 
 # ----------------------------------------------------------------
-# ACTIVITY 2: COLOR SENSOR
+# COLOR SENSOR
 # ----------------------------------------------------------------
 
 def handleColorCommand():
@@ -223,10 +226,10 @@ def handleColorCommand():
 
 
 # ----------------------------------------------------------------
-# ACTIVITY 3: CAMERA
+# CAMERA
 # ----------------------------------------------------------------
 
-_camera = None
+_camera           = None
 _frames_remaining = 5
 
 
@@ -257,7 +260,7 @@ def handleCameraCommand():
 
 
 # ----------------------------------------------------------------
-# ACTIVITY 4: LIDAR
+# LIDAR
 # ----------------------------------------------------------------
 
 def handleLidarCommand():
@@ -269,7 +272,7 @@ def handleLidarCommand():
 
 
 # ----------------------------------------------------------------
-# COMMAND-LINE INTERFACE
+# USER INPUT
 # ----------------------------------------------------------------
 
 def handleUserInput(line):
@@ -287,32 +290,24 @@ def handleUserInput(line):
         handleLidarCommand()
 
     elif line == 'w':
-        if isEstopActive():
-            print("Refused: E-Stop is active")
-            return
+        if isEstopActive(): print("Refused: E-Stop is active"); return
         print("Sending FORWARD command...")
         sendCommand(COMMAND_FORWARD)
 
     elif line == 's':
-        if isEstopActive():
-            print("Refused: E-Stop is active")
-            return
+        if isEstopActive(): print("Refused: E-Stop is active"); return
         print("Sending BACKWARD command...")
         sendCommand(COMMAND_BACKWARD)
 
     elif line == 'a':
-        if isEstopActive():
-            print("Refused: E-Stop is active")
-            return
+        if isEstopActive(): print("Refused: E-Stop is active"); return
         print("Sending LEFT command...")
-        sendCommand(COMMAND_RIGHT)   # swapped: a turns right physically
+        sendCommand(COMMAND_RIGHT)   # physically swapped on Alex
 
     elif line == 'd':
-        if isEstopActive():
-            print("Refused: E-Stop is active")
-            return
+        if isEstopActive(): print("Refused: E-Stop is active"); return
         print("Sending RIGHT command...")
-        sendCommand(COMMAND_LEFT)    # swapped: d turns left physically
+        sendCommand(COMMAND_LEFT)    # physically swapped on Alex
 
     elif line == '+':
         print("Sending SPEED UP command...")
@@ -323,14 +318,18 @@ def handleUserInput(line):
         sendCommand(COMMAND_SPEED, params=[0])
 
     else:
-        print(f"Unknown input: '{line}'. Valid: w/a/s/d, e, c, p, l, +/-")
+        print(f"Unknown: '{line}'. Valid: w/a/s/d, e, c, p, l, +/-")
 
+
+# ----------------------------------------------------------------
+# MAIN LOOP
+# ----------------------------------------------------------------
 
 def runCommandInterface():
     print("Sensor interface ready.")
     print("Controls: w=forward s=backward a=left d=right")
-    print(" e=estop c=color p=camera l=lidar")
-    print(" +=speed up -=speed down")
+    print(" e=estop  c=color  p=camera  l=lidar")
+    print(" +=speed up  -=speed down")
     print("Press Ctrl+C to exit.\n")
 
     while True:
@@ -338,8 +337,6 @@ def runCommandInterface():
             pkt = receiveFrame()
             if pkt:
                 printPacket(pkt)
-
-                # IMPORTANT: forward the exact received packet to terminal 2
                 relay.onPacketReceived(
                     packFrame(
                         pkt['packetType'],
@@ -355,9 +352,7 @@ def runCommandInterface():
             if line:
                 handleUserInput(line)
 
-        # IMPORTANT: check once per loop for second-terminal packets
         relay.checkSecondTerminal(_ser)
-
         time.sleep(0.05)
 
 
