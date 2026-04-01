@@ -1,8 +1,9 @@
 /*
  * serial_driver.h
- * Studio 13: Sensor Mini-Project
+ * CG2111A — Alex Robot
  *
  * Serial transport layer and packet framing.
+ * No changes from original.
  */
 
 #pragma once
@@ -12,7 +13,7 @@
 #include <string.h>
 #include "packets.h"
 
-// 0 = use Arduino Serial now (recommended for fastest integration)
+// 0 = use Arduino Serial (default)
 // 1 = use bare-metal USART0 circular buffers
 #define USE_BAREMETAL_SERIAL 0
 
@@ -46,7 +47,7 @@ void usartInit(uint16_t ubrr) {
 }
 
 bool txEnqueue(const uint8_t *data, uint8_t len) {
-    uint8_t used = txUsed();
+    uint8_t used       = txUsed();
     uint8_t free_space = (TX_BUFFER_SIZE - 1) - used;
     if (len > free_space) return false;
 
@@ -65,7 +66,7 @@ ISR(USART0_UDRE_vect) {
         UCSR0B &= ~(1 << UDRIE0);
         return;
     }
-    UDR0 = tx_buf[tx_tail];
+    UDR0    = tx_buf[tx_tail];
     tx_tail = (tx_tail + 1) & TX_BUFFER_MASK;
 }
 
@@ -91,7 +92,7 @@ ISR(USART0_RX_vect) {
     }
 }
 
-#endif
+#endif  // USE_BAREMETAL_SERIAL
 
 static uint8_t computeChecksum(const uint8_t *data, uint8_t len) {
     uint8_t cs = 0;
@@ -121,9 +122,8 @@ static bool receiveFrame(TPacket *pkt) {
 
         if (hi == MAGIC_HI && lo == MAGIC_LO) {
             uint8_t frame[FRAME_SIZE];
-            for (uint8_t i = 0; i < FRAME_SIZE; i++) {
+            for (uint8_t i = 0; i < FRAME_SIZE; i++)
                 frame[i] = rx_buf[(rx_tail + i) & RX_BUFFER_MASK];
-            }
 
             uint8_t expected = computeChecksum(&frame[2], TPACKET_SIZE);
             if (frame[FRAME_SIZE - 1] == expected) {
@@ -132,7 +132,6 @@ static bool receiveFrame(TPacket *pkt) {
                 return true;
             }
         }
-
         rx_tail = (rx_tail + 1) & RX_BUFFER_MASK;
     }
     return false;
@@ -151,12 +150,8 @@ static bool receiveFrame(TPacket *pkt) {
                 break;
 
             case 1:
-                if (byte == MAGIC_LO) {
-                    state = 2;
-                    index = 0;
-                } else if (byte != MAGIC_HI) {
-                    state = 0;
-                }
+                if      (byte == MAGIC_LO) { state = 2; index = 0; }
+                else if (byte != MAGIC_HI) { state = 0; }
                 break;
 
             case 2:
