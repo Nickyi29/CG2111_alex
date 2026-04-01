@@ -1,9 +1,45 @@
 /*
  * alex_control.ino
- * Studio 13: Sensor Mini-Project
+ * CG2111A — Alex Robot
+ *
+ * CHANGES FROM ORIGINAL:
+ *
+ *  1. Removed #include <AFMotor.h> — fully bare-metal, motorsInit() called instead.
+ *
+ *  2. Servo timer moved from Timer 1 → Timer 4:
+ *       TCCR1x / OCR1A / TIMSK1 / TIMER1_COMPA_vect
+ *     replaced with:
+ *       TCCR4x / OCR4A / TIMSK4 / TIMER4_COMPA_vect
+ *     Reason: Motor shield physically uses OC1A (D11) for M1/M2 PWM.
+ *
+ *  3. Servo signal pins moved from PORTC (PC0-PC3 = D37-D34 on Mega)
+ *     to PORTF (PF0-PF3 = A0-A3).
+ *     PORTC on the Mega is NOT A0-A3.
+ *
+ *  4. Color sensor OUT pin moved from PE5 (D3) to PA0 (D22).
+ *     PE5 = D3 = OC3C is the motor shield M3/M4 PWM pin.
+ *
+ *  5. Added motorsInit() call in setup().
+ *
+ * Pin summary:
+ *   A0  PF0   Servo base signal
+ *   A1  PF1   Servo shoulder signal
+ *   A2  PF2   Servo elbow signal
+ *   A3  PF3   Servo gripper signal
+ *   A4  PF4   TCS3200 S0
+ *   A5  PF5   TCS3200 S1
+ *   A6  PF6   TCS3200 S2
+ *   A7  PF7   TCS3200 S3
+ *   D22 PA0   TCS3200 OUT (input)
+ *   D2  PE4   E-Stop (INT4)
+ *   D3  PE5   OC3C Motor M3/M4 PWM — DO NOT USE AS GPIO
+ *   D4  PG5   Motor shield shift reg CLK
+ *   D7  PH4   Motor shield shift reg OE
+ *   D8  PH5   Motor shield shift reg DATA
+ *   D11 PB5   OC1A Motor M1/M2 PWM — DO NOT USE AS GPIO
+ *   D12 PB6   Motor shield shift reg LATCH
  */
 
-#include <AFMotor.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <string.h>
@@ -12,57 +48,69 @@
 #include "packets.h"
 #include "serial_driver.h"
 
-// Arm state — from Mini-Project 1
-const int BASE_MIN = 30,     BASE_MAX = 150;
-const int SHOULDER_MIN = 40, SHOULDER_MAX = 140;
-const int ELBOW_MIN = 20,    ELBOW_MAX = 160;
-const int GRIPPER_MIN = 10,  GRIPPER_MAX = 90;
+// =============================================================
+// Servo / arm constants
+// =============================================================
 
-#define BASE_PIN     (1 << 0)
-#define SHOULDER_PIN (1 << 1)
-#define ELBOW_PIN    (1 << 2)
-#define GRIPPER_PIN  (1 << 3)
+const int BASE_MIN     = 30,  BASE_MAX     = 150;
+const int SHOULDER_MIN = 40,  SHOULDER_MAX = 140;
+const int ELBOW_MIN    = 20,  ELBOW_MAX    = 160;
+const int GRIPPER_MIN  = 10,  GRIPPER_MAX  = 90;
 
-volatile int curPos[4]          = {90, 90, 90, 90};
-int          targetPos[4]       = {90, 90, 90, 90};
-int          msPerDeg           = 10;
-unsigned long lastMoveTime[4]   = {0, 0, 0, 0};
+// Bit masks for Port F (A0-A3 = PF0-PF3)
+#define BASE_PIN     (1 << PF0)
+#define SHOULDER_PIN (1 << PF1)
+#define ELBOW_PIN    (1 << PF2)
+#define GRIPPER_PIN  (1 << PF3)
+
+volatile int          curPos[4]       = {90, 90, 90, 90};
+int                   targetPos[4]    = {90, 90, 90, 90};
+int                   msPerDeg        = 10;
+unsigned long         lastMoveTime[4] = {0, 0, 0, 0};
 volatile unsigned int servoTicks[4];
 
-// Direction constants — must match dir enum values in robotlib.ino
-// Defined here as #define so they are available before robotlib.ino is merged
+// =============================================================
+// Direction constants — must match robotlib.ino
+// =============================================================
+
 #define DIR_STOP 0
 #define DIR_GO   1
 #define DIR_BACK 2
 #define DIR_CCW  3
 #define DIR_CW   4
 
+// =============================================================
 // Speed limits
-#define SPEED_MIN 30    // FIX: lowered from 50 → allows slower crawl (3 steps down from 150)
-#define SPEED_MAX 255
+// =============================================================
+
+#define SPEED_MIN     30
+#define SPEED_MAX     255
 #define SPEED_DEFAULT 150
 #define SPEED_STEP    50
 
 // =============================================================
-// Pin mapping
+// Pin definitions
 // =============================================================
 
+// E-Stop — D2 = PE4 = INT4
 #define ESTOP_DDR  DDRE
 #define ESTOP_PORT PORTE
 #define ESTOP_PINR PINE
 #define ESTOP_BIT  PE4
 
-#define TCS_OUT_DDR  DDRE
-#define TCS_OUT_PORT PORTE
-#define TCS_OUT_PINR PINE
-#define TCS_OUT_BIT  PE5
+// TCS3200 control — A4-A7 = PF4-PF7
+#define TCS_CTRL_DDR  DDRF
+#define TCS_CTRL_PORT PORTF
+#define TCS_S0_BIT    PF4
+#define TCS_S1_BIT    PF5
+#define TCS_S2_BIT    PF6
+#define TCS_S3_BIT    PF7
 
-#define TCS_CTRL_DDR  DDRA
-#define TCS_CTRL_PORT PORTA
-#define TCS_S0_BIT PA0
-#define TCS_S1_BIT PA1
-#define TCS_S2_BIT PA2
-#define TCS_S3_BIT PA3
+// TCS3200 OUT — D22 = PA0 (input, polled)
+#define TCS_OUT_DDR  DDRA
+#define TCS_OUT_PORT PORTA
+#define TCS_OUT_PINR PINA
+#define TCS_OUT_BIT  PA0
 
 // =============================================================
 // State
@@ -74,6 +122,10 @@ volatile unsigned long lastButtonIsrMs = 0;
 volatile uint8_t       motorSpeed      = SPEED_DEFAULT;
 volatile uint8_t       currentDir      = DIR_STOP;
 
+// =============================================================
+// E-Stop ISR — INT4 on PE4 (D2)
+// =============================================================
+
 ISR(INT4_vect) {
     unsigned long now = millis();
     if ((unsigned long)(now - lastButtonIsrMs) < 50) return;
@@ -84,9 +136,50 @@ ISR(INT4_vect) {
     if (buttonState == STATE_RUNNING && pressed) {
         buttonState  = STATE_STOPPED;
         stateChanged = true;
+        stop();
     } else if (buttonState == STATE_STOPPED && !pressed) {
         buttonState  = STATE_RUNNING;
         stateChanged = true;
+    }
+}
+
+// =============================================================
+// Servo PWM — Timer 4 CTC (replaces Timer 1)
+// =============================================================
+
+void updateTicks(void) {
+    for (int i = 0; i < 4; i++) {
+        servoTicks[i] = 2000 + (unsigned int)((long)curPos[i] * 2000 / 180);
+    }
+}
+
+ISR(TIMER4_COMPA_vect) {
+    PORTF |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
+
+    bool bA = true, sA = true, eA = true, gA = true;
+    while (bA || sA || eA || gA) {
+        unsigned int elapsed = TCNT4;
+        if (elapsed >= servoTicks[0]) { PORTF &= ~BASE_PIN;     bA = false; }
+        if (elapsed >= servoTicks[1]) { PORTF &= ~SHOULDER_PIN; sA = false; }
+        if (elapsed >= servoTicks[2]) { PORTF &= ~ELBOW_PIN;    eA = false; }
+        if (elapsed >= servoTicks[3]) { PORTF &= ~GRIPPER_PIN;  gA = false; }
+    }
+}
+
+// =============================================================
+// Arm movement — non-blocking
+// =============================================================
+
+void processMovement(void) {
+    unsigned long now = millis();
+    for (int i = 0; i < 4; i++) {
+        if (curPos[i] != targetPos[i] &&
+            (unsigned long)(now - lastMoveTime[i]) >= (unsigned long)msPerDeg) {
+            if (targetPos[i] > curPos[i]) curPos[i]++;
+            else                          curPos[i]--;
+            lastMoveTime[i] = now;
+            updateTicks();
+        }
     }
 }
 
@@ -111,27 +204,24 @@ static void sendStatus(TState state) {
 // TCS3200 helpers
 // =============================================================
 
-static inline void writeBit(volatile uint8_t &reg, uint8_t bit, bool high) {
-    if (high) reg |=  (1 << bit);
-    else      reg &= ~(1 << bit);
+static inline void setTcsFilter(bool s2High, bool s3High) {
+    if (s2High) TCS_CTRL_PORT |=  (1 << TCS_S2_BIT);
+    else        TCS_CTRL_PORT &= ~(1 << TCS_S2_BIT);
+    if (s3High) TCS_CTRL_PORT |=  (1 << TCS_S3_BIT);
+    else        TCS_CTRL_PORT &= ~(1 << TCS_S3_BIT);
 }
 
 static inline uint8_t readTcsOut(void) {
     return (TCS_OUT_PINR & (1 << TCS_OUT_BIT)) ? 1 : 0;
 }
 
-static void setTcsFilter(uint8_t s2High, uint8_t s3High) {
-    writeBit(TCS_CTRL_PORT, TCS_S2_BIT, s2High);
-    writeBit(TCS_CTRL_PORT, TCS_S3_BIT, s3High);
-}
-
-static uint32_t measureChannelHz(uint8_t s2High, uint8_t s3High) {
+static uint32_t measureChannelHz(bool s2High, bool s3High) {
     setTcsFilter(s2High, s3High);
     delayMicroseconds(300);
 
-    uint32_t risingEdges  = 0;
-    uint8_t  prev         = readTcsOut();
-    unsigned long startMs = millis();
+    uint32_t      risingEdges = 0;
+    uint8_t       prev        = readTcsOut();
+    unsigned long startMs     = millis();
 
     while ((unsigned long)(millis() - startMs) < 100) {
         uint8_t cur = readTcsOut();
@@ -142,41 +232,11 @@ static uint32_t measureChannelHz(uint8_t s2High, uint8_t s3High) {
 }
 
 static void readColorChannels(uint32_t *r, uint32_t *g, uint32_t *b) {
-    *r = measureChannelHz(0, 0);  // red
-    *g = measureChannelHz(1, 1);  // green
-    *b = measureChannelHz(0, 1);  // blue
+    *r = measureChannelHz(false, false);  // S2=L S3=L → red
+    *g = measureChannelHz(true,  true);   // S2=H S3=H → green
+    *b = measureChannelHz(false, true);   // S2=L S3=H → blue
 }
 
-void updateTicks() {
-    for (int i = 0; i < 4; i++) {
-        servoTicks[i] = 2000 + (unsigned int)((long)curPos[i] * 2000 / 180);
-    }
-}
-
-void processMovement() {
-    unsigned long now = millis();
-    for (int i = 0; i < 4; i++) {
-        if (curPos[i] != targetPos[i] &&
-            (now - lastMoveTime[i] >= (unsigned long)msPerDeg)) {
-            if (targetPos[i] > curPos[i]) curPos[i]++;
-            else curPos[i]--;
-            lastMoveTime[i] = now;
-            updateTicks();
-        }
-    }
-}
-
-ISR(TIMER1_COMPA_vect) {
-    PORTC |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
-    bool bActive = true, sActive = true, eActive = true, gActive = true;
-    while (bActive || sActive || eActive || gActive) {
-        unsigned int elapsed = TCNT1;
-        if (elapsed >= servoTicks[0]) { PORTC &= ~BASE_PIN;     bActive = false; }
-        if (elapsed >= servoTicks[1]) { PORTC &= ~SHOULDER_PIN; sActive = false; }
-        if (elapsed >= servoTicks[2]) { PORTC &= ~ELBOW_PIN;    eActive = false; }
-        if (elapsed >= servoTicks[3]) { PORTC &= ~GRIPPER_PIN;  gActive = false; }
-    }
-}
 // =============================================================
 // Command handler
 // =============================================================
@@ -220,137 +280,132 @@ static void handleCommand(const TPacket *cmd) {
             break;
         }
 
-        case COMMAND_FORWARD: {
+        case COMMAND_FORWARD:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             currentDir = DIR_GO;
             forward(motorSpeed);
             break;
-        }
 
-        case COMMAND_BACKWARD: {
+        case COMMAND_BACKWARD:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             currentDir = DIR_BACK;
             backward(motorSpeed);
             break;
-        }
 
-        case COMMAND_LEFT: {
+        case COMMAND_LEFT:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             currentDir = DIR_CCW;
             ccw(motorSpeed);
             break;
-        }
 
-        case COMMAND_RIGHT: {
+        case COMMAND_RIGHT:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             currentDir = DIR_CW;
             cw(motorSpeed);
             break;
-        }
 
         case COMMAND_SPEED: {
             int delta    = (cmd->params[0] == 1) ? SPEED_STEP : -SPEED_STEP;
             int newSpeed = (int)motorSpeed + delta;
-            if (newSpeed < SPEED_MIN) newSpeed = SPEED_MIN;  // FIX: floor = 30
+            if (newSpeed < SPEED_MIN) newSpeed = SPEED_MIN;
             if (newSpeed > SPEED_MAX) newSpeed = SPEED_MAX;
             motorSpeed = (uint8_t)newSpeed;
-            // immediately re-apply if robot is currently moving
-            if (buttonState != STATE_STOPPED && currentDir != DIR_STOP) {
+            if (buttonState != STATE_STOPPED && currentDir != DIR_STOP)
                 move(motorSpeed, currentDir);
-            }
-            // send new speed back so Pi can display it
             sendResponse(RESP_OK, motorSpeed);
             break;
         }
+
         case COMMAND_ARM_BASE:
-        if (buttonState == STATE_STOPPED) {
-            sendStatus(STATE_STOPPED);
+            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
+            targetPos[0] = constrain((int)cmd->params[0], BASE_MIN, BASE_MAX);
             break;
-        }
-        targetPos[0] = constrain((int)cmd->params[0], BASE_MIN, BASE_MAX);
-        break;
 
         case COMMAND_ARM_SHOULDER:
-        if (buttonState == STATE_STOPPED) {
-            sendStatus(STATE_STOPPED); break;
-        }
-        targetPos[1] = constrain((int)cmd->params[0], SHOULDER_MIN, SHOULDER_MAX);
-        break;
+            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
+            targetPos[1] = constrain((int)cmd->params[0], SHOULDER_MIN, SHOULDER_MAX);
+            break;
 
         case COMMAND_ARM_ELBOW:
-        if (buttonState == STATE_STOPPED) {
-            sendStatus(STATE_STOPPED); break;
-        }
-        targetPos[2] = constrain((int)cmd->params[0], ELBOW_MIN, ELBOW_MAX);
-        break;
+            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
+            targetPos[2] = constrain((int)cmd->params[0], ELBOW_MIN, ELBOW_MAX);
+            break;
 
         case COMMAND_ARM_GRIPPER:
-        if (buttonState == STATE_STOPPED) {
-            sendStatus(STATE_STOPPED); break;
-        }
-        targetPos[3] = constrain((int)cmd->params[0], GRIPPER_MIN, GRIPPER_MAX);
-        break;
-        
+            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
+            targetPos[3] = constrain((int)cmd->params[0], GRIPPER_MIN, GRIPPER_MAX);
+            break;
+
         case COMMAND_ARM_HOME:
-        if (buttonState == STATE_STOPPED) {
-            sendStatus(STATE_STOPPED); break;
-        }
-        for (int i = 0; i < 4; i++) targetPos[i] = 90;
-        break;
-        
+            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
+            for (int i = 0; i < 4; i++) targetPos[i] = 90;
+            break;
+
         case COMMAND_ARM_SPEED:
-        msPerDeg = (int)cmd->params[0];
-        break;
+            msPerDeg = (int)cmd->params[0];
+            break;
 
         default:
-        break;
+            break;
     }
 }
 
 // =============================================================
-// setup() and loop()
+// setup()
 // =============================================================
 
-void setup() {
+void setup(void) {
 #if USE_BAREMETAL_SERIAL
     usartInit(103);
 #else
     Serial.begin(9600);
 #endif
 
+    // TCS3200 control — A4-A7 (PF4-PF7) as outputs
     TCS_CTRL_DDR |= (1 << TCS_S0_BIT) | (1 << TCS_S1_BIT)
                   | (1 << TCS_S2_BIT) | (1 << TCS_S3_BIT);
 
+    // TCS3200 OUT — D22 (PA0) as input, no pull-up
     TCS_OUT_DDR  &= ~(1 << TCS_OUT_BIT);
     TCS_OUT_PORT &= ~(1 << TCS_OUT_BIT);
 
+    // 20% scaling: S0=HIGH, S1=LOW
     TCS_CTRL_PORT |=  (1 << TCS_S0_BIT);
     TCS_CTRL_PORT &= ~(1 << TCS_S1_BIT);
 
-    // E-Stop — pull-up enabled, prevents floating pin phantom triggers
+    // E-Stop — D2 (PE4) input with pull-up, INT4 any-change
     ESTOP_DDR  &= ~(1 << ESTOP_BIT);
     ESTOP_PORT |=  (1 << ESTOP_BIT);
-
-    // INT4 on any logical change
     EICRB &= ~((1 << ISC41) | (1 << ISC40));
     EICRB |=  (1 << ISC40);
     EIMSK |=  (1 << INT4);
 
-    sei();
-    // Arm pin setup
-    DDRC |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
-    // Timer 1 for servo PWM
-    TCCR1A = 0; TCCR1B = 0; TCNT1 = 0;
-    OCR1A = 40000;
-    TCCR1B |= (1 << WGM12);
-    TCCR1B |= (1 << CS11);
-    TIMSK1 |= (1 << OCIE1A);
+    // Servo signal pins — A0-A3 (PF0-PF3) as outputs
+    DDRF |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
 
-updateTicks();
+    // Timer 4: 16-bit CTC, 20ms period for servo PWM
+    // 16MHz / 8 = 2MHz clock → OCR4A=40000 → 20ms
+    cli();
+    TCCR4A = 0;
+    TCCR4B = 0;
+    TCNT4  = 0;
+    OCR4A  = 40000;
+    TCCR4B |= (1 << WGM42);   // CTC mode
+    TCCR4B |= (1 << CS41);    // prescaler 8
+    TIMSK4 |= (1 << OCIE4A);  // enable compare-match interrupt
+    sei();
+
+    updateTicks();
+
+    // Bare-metal motor driver — Timer 1 + Timer 3 + shift register
+    motorsInit();
 }
 
-void loop() {
-    // arm movement — runs every iteration
+// =============================================================
+// loop()
+// =============================================================
+
+void loop(void) {
     processMovement();
 
     if (stateChanged) {
@@ -365,5 +420,4 @@ void loop() {
     if (receiveFrame(&incoming)) {
         handleCommand(&incoming);
     }
-
 }
