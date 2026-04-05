@@ -209,10 +209,6 @@ def _handleInput(line: str, client: TCPClient):
         sendTPacketFrame(client.sock, frame)
         print('[second_terminal] Sent: GRIPPER CLOSE')
 
-    elif line == 'q':
-        print('[second_terminal] Quitting.')
-        raise KeyboardInterrupt
-
     else:
         print(f"[second_terminal] Unknown: '{line}'. Valid: e=estop h=home j/r=base i/k=shoulder u/o=elbow n/m=gripper q=quit")
 
