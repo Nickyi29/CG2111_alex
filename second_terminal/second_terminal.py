@@ -123,7 +123,7 @@ def _printPacket(pkt):
     if ptype == PACKET_TYPE_RESPONSE:
         if cmd == RESP_OK:
             new_speed = pkt['params'][0]
-            if new_speed > 0:   # FIXED: guard against COMMAND_STOP sending param=0
+            if new_speed > 0:
                 pct = round(new_speed / 255 * 100)
                 print(f"[robot] Speed updated -> {new_speed}/255 ({pct}%)")
 
@@ -153,6 +153,41 @@ def _printPacket(pkt):
         print(f"[robot] Packet: type={ptype}, cmd={cmd}")
 
 
+# ---------------------------------------------------------------------------
+# Controls help text
+# ---------------------------------------------------------------------------
+
+def _printHelp():
+    print("")
+    print("========================================")
+    print("  ARM CONTROLS")
+    print("========================================")
+    print("  h         Home (all joints to 90 deg)")
+    print("")
+    print("  BASE (rotate left/right):")
+    print("  j         Base LEFT  -> 60 deg")
+    print("  r         Base RIGHT -> 120 deg")
+    print("")
+    print("  SHOULDER (raise/lower upper arm):")
+    print("  i         Shoulder UP   -> 120 deg")
+    print("  k         Shoulder DOWN -> 60 deg")
+    print("")
+    print("  ELBOW (raise/lower forearm):")
+    print("  u         Elbow UP   -> 120 deg")
+    print("  o         Elbow DOWN -> 60 deg")
+    print("")
+    print("  GRIPPER (open/close claw):")
+    print("  n         Gripper OPEN  -> 90 deg")
+    print("  m         Gripper CLOSE -> 10 deg")
+    print("")
+    print("  EMERGENCY:")
+    print("  e         E-Stop (stops robot immediately)")
+    print("")
+    print("  q         Quit")
+    print("========================================")
+    print("")
+
+
 def _handleInput(line: str, client: TCPClient):
     line = line.strip().lower()
     if not line:
@@ -175,46 +210,46 @@ def _handleInput(line: str, client: TCPClient):
     elif line == 'j':
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_BASE, params=[60])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: BASE LEFT')
+        print('[second_terminal] Sent: BASE LEFT  -> 60 deg')
 
     elif line == 'r':
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_BASE, params=[120])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: BASE RIGHT')
+        print('[second_terminal] Sent: BASE RIGHT -> 120 deg')
 
     elif line == 'i':
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[120])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: SHOULDER UP')
+        print('[second_terminal] Sent: SHOULDER UP   -> 120 deg')
 
     elif line == 'k':
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[60])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: SHOULDER DOWN')
+        print('[second_terminal] Sent: SHOULDER DOWN -> 60 deg')
 
     elif line == 'u':
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_ELBOW, params=[120])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: ELBOW UP')
+        print('[second_terminal] Sent: ELBOW UP   -> 120 deg')
 
     elif line == 'o':
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_ELBOW, params=[60])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: ELBOW DOWN')
+        print('[second_terminal] Sent: ELBOW DOWN -> 60 deg')
 
     elif line == 'n':
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[90])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: GRIPPER OPEN')
+        print('[second_terminal] Sent: GRIPPER OPEN  -> 90 deg')
 
     elif line == 'm':
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[10])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: GRIPPER CLOSE')
+        print('[second_terminal] Sent: GRIPPER CLOSE -> 10 deg')
 
     else:
-        print(f"[second_terminal] Unknown: '{line}'. "
-              f"Valid: e=estop h=home j/r=base i/k=shoulder u/o=elbow n/m=gripper q=quit")
+        print(f"[second_terminal] Unknown key: '{line}'")
+        _printHelp()
 
 
 def run():
@@ -229,9 +264,12 @@ def run():
         sys.exit(1)
 
     print('[second_terminal] Connected!')
-    print('[second_terminal] Commands: e=estop h=home j/r=base '
-          'i/k=shoulder u/o=elbow n/m=gripper q=quit')
-    print('[second_terminal] Incoming robot packets will be printed below.\n')
+
+    # Print full controls on startup
+    _printHelp()
+
+    print('[second_terminal] Incoming robot status will be printed below.')
+    print('[second_terminal] The arm will NOT move while E-Stop is active.\n')
 
     try:
         while True:
