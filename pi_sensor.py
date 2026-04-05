@@ -3,10 +3,6 @@
 pi_sensor.py
 CG2111A — Alex Robot
 Operator 1: robot movement, sensors, relay host.
-
-CHANGES FROM ORIGINAL:
-  - Added arm command constants (COMMAND_ARM_BASE through COMMAND_ARM_SPEED)
-    to match packets.h and second_terminal.py
 """
 
 import struct
@@ -29,7 +25,7 @@ from second_terminal import relay
 # ----------------------------------------------------------------
 
 PORT     = "/dev/ttyACM0"
-BAUDRATE = 9600
+BAUDRATE = 115200
 
 _ser = None
 
@@ -69,7 +65,7 @@ COMMAND_ARM_ELBOW    = 9
 COMMAND_ARM_GRIPPER  = 10
 COMMAND_ARM_HOME     = 11
 COMMAND_ARM_SPEED    = 12
-COMMAND_STOP         = 13   
+COMMAND_STOP         = 13
 
 RESP_OK     = 0
 RESP_STATUS = 1
@@ -183,29 +179,29 @@ def printPacket(pkt):
     cmd   = pkt['command']
 
     if ptype == PACKET_TYPE_RESPONSE:
-    if cmd == RESP_OK:
-        new_speed = pkt['params'][0]
-        if new_speed > 0:
-            pct = round(new_speed / 255 * 100)
-            print(f"Speed updated -> {new_speed}/255 ({pct}%)")
+        if cmd == RESP_OK:
+            new_speed = pkt['params'][0]
+            if new_speed > 0:
+                pct = round(new_speed / 255 * 100)
+                print(f"Speed updated -> {new_speed}/255 ({pct}%)")
 
-    elif cmd == RESP_STATUS:
-        state        = pkt['params'][0]
-        _estop_state = state
-        print("Status: RUNNING" if state == STATE_RUNNING else "Status: STOPPED")
+        elif cmd == RESP_STATUS:
+            state        = pkt['params'][0]
+            _estop_state = state
+            print("Status: RUNNING" if state == STATE_RUNNING else "Status: STOPPED")
 
-    elif cmd == RESP_COLOR:
-        r = pkt['params'][0]
-        g = pkt['params'][1]
-        b = pkt['params'][2]
-        print(f"Color: R={r} Hz, G={g} Hz, B={b} Hz")
+        elif cmd == RESP_COLOR:
+            r = pkt['params'][0]
+            g = pkt['params'][1]
+            b = pkt['params'][2]
+            print(f"Color: R={r} Hz, G={g} Hz, B={b} Hz")
 
-    else:
-        print(f"Response: unknown command {cmd}")
+        else:
+            print(f"Response: unknown command {cmd}")
 
-    debug = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
-    if debug:
-        print(f"Arduino debug: {debug}")
+        debug = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
+        if debug:
+            print(f"Arduino debug: {debug}")
 
     elif ptype == PACKET_TYPE_MESSAGE:
         msg = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
@@ -255,6 +251,8 @@ def handleCameraCommand():
     if _frames_remaining <= 0:
         print("Refused: no camera frames remaining")
         return
+    if _camera is None:
+        openCamera()
     frame = captureGreyscaleFrame(_camera)
     renderGreyscaleFrame(frame)
     _frames_remaining -= 1
@@ -292,22 +290,30 @@ def handleUserInput(line):
         handleLidarCommand()
 
     elif line == 'w':
-        if isEstopActive(): print("Refused: E-Stop is active"); return
+        if isEstopActive():
+            print("Refused: E-Stop is active")
+            return
         print("Sending FORWARD command...")
         sendCommand(COMMAND_FORWARD)
 
     elif line == 's':
-        if isEstopActive(): print("Refused: E-Stop is active"); return
+        if isEstopActive():
+            print("Refused: E-Stop is active")
+            return
         print("Sending BACKWARD command...")
         sendCommand(COMMAND_BACKWARD)
 
     elif line == 'a':
-        if isEstopActive(): print("Refused: E-Stop is active"); return
+        if isEstopActive():
+            print("Refused: E-Stop is active")
+            return
         print("Sending LEFT command...")
         sendCommand(COMMAND_RIGHT)   # physically swapped on Alex
 
     elif line == 'd':
-        if isEstopActive(): print("Refused: E-Stop is active"); return
+        if isEstopActive():
+            print("Refused: E-Stop is active")
+            return
         print("Sending RIGHT command...")
         sendCommand(COMMAND_LEFT)    # physically swapped on Alex
 
@@ -318,13 +324,13 @@ def handleUserInput(line):
     elif line == '-':
         print("Sending SPEED DOWN command...")
         sendCommand(COMMAND_SPEED, params=[0])
-      
+
     elif line == 'x':
         print("Sending STOP command...")
         sendCommand(COMMAND_STOP)
-      
+
     else:
-        print(f"Unknown: '{line}'. Valid: w/a/s/d, e, c, p, l, +/-")
+        print(f"Unknown: '{line}'. Valid: w/a/s/d, e, c, p, l, +/-, x")
 
 
 # ----------------------------------------------------------------
@@ -333,13 +339,13 @@ def handleUserInput(line):
 
 def runCommandInterface():
     print("Sensor interface ready.")
-    print("Controls: w=forward s=backward a=left d=right x=stop")
+    print("Controls: w=forward s=backward a=left d=right  x=stop")
     print(" e=estop  c=color  p=camera  l=lidar")
     print(" +=speed up  -=speed down")
     print("Press Ctrl+C to exit.\n")
 
     while True:
-        if _ser.in_waiting >= FRAME_SIZE:
+        while _ser.in_waiting >= FRAME_SIZE:
             pkt = receiveFrame()
             if pkt:
                 printPacket(pkt)
@@ -359,12 +365,11 @@ def runCommandInterface():
                 handleUserInput(line)
 
         relay.checkSecondTerminal(_ser)
-        time.sleep(0.05)
+        time.sleep(0.02)
 
 
 if __name__ == '__main__':
     openSerial()
-    openCamera()
     relay.start()
 
     try:
