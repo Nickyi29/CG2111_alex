@@ -183,29 +183,29 @@ def printPacket(pkt):
     cmd   = pkt['command']
 
     if ptype == PACKET_TYPE_RESPONSE:
-      if cmd == RESP_OK:
-          new_speed = pkt['params'][0]
-       if new_speed > 0:
-          pct = round(new_speed / 255 * 100)
-          print(f"Speed updated -> {new_speed}/255 ({pct}%)")
-         
-        elif cmd == RESP_STATUS:
-            state        = pkt['params'][0]
-            _estop_state = state
-            print("Status: RUNNING" if state == STATE_RUNNING else "Status: STOPPED")
+    if cmd == RESP_OK:
+        new_speed = pkt['params'][0]
+        if new_speed > 0:
+            pct = round(new_speed / 255 * 100)
+            print(f"Speed updated -> {new_speed}/255 ({pct}%)")
 
-        elif cmd == RESP_COLOR:
-            r = pkt['params'][0]
-            g = pkt['params'][1]
-            b = pkt['params'][2]
-            print(f"Color: R={r} Hz, G={g} Hz, B={b} Hz")
+    elif cmd == RESP_STATUS:
+        state        = pkt['params'][0]
+        _estop_state = state
+        print("Status: RUNNING" if state == STATE_RUNNING else "Status: STOPPED")
 
-        else:
-            print(f"Response: unknown command {cmd}")
+    elif cmd == RESP_COLOR:
+        r = pkt['params'][0]
+        g = pkt['params'][1]
+        b = pkt['params'][2]
+        print(f"Color: R={r} Hz, G={g} Hz, B={b} Hz")
 
-        debug = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
-        if debug:
-            print(f"Arduino debug: {debug}")
+    else:
+        print(f"Response: unknown command {cmd}")
+
+    debug = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
+    if debug:
+        print(f"Arduino debug: {debug}")
 
     elif ptype == PACKET_TYPE_MESSAGE:
         msg = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
