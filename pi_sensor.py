@@ -69,6 +69,7 @@ COMMAND_ARM_ELBOW    = 9
 COMMAND_ARM_GRIPPER  = 10
 COMMAND_ARM_HOME     = 11
 COMMAND_ARM_SPEED    = 12
+COMMAND_STOP         = 13   
 
 RESP_OK     = 0
 RESP_STATUS = 1
@@ -316,7 +317,11 @@ def handleUserInput(line):
     elif line == '-':
         print("Sending SPEED DOWN command...")
         sendCommand(COMMAND_SPEED, params=[0])
-
+      
+    elif line == 'x':
+        print("Sending STOP command...")
+        sendCommand(COMMAND_STOP)
+      
     else:
         print(f"Unknown: '{line}'. Valid: w/a/s/d, e, c, p, l, +/-")
 
@@ -327,7 +332,7 @@ def handleUserInput(line):
 
 def runCommandInterface():
     print("Sensor interface ready.")
-    print("Controls: w=forward s=backward a=left d=right")
+    print("Controls: w=forward s=backward a=left d=right" x=stop")
     print(" e=estop  c=color  p=camera  l=lidar")
     print(" +=speed up  -=speed down")
     print("Press Ctrl+C to exit.\n")
