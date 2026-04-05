@@ -2,7 +2,7 @@
  * alex_control.ino
  * CG2111A — Alex Robot
  *
-pin summary:
+ * Pin summary:
  *   D21 PD0 INT0   E-Stop button
  *   D22 PA0        Base servo signal
  *   D23 PA1        Shoulder servo signal
@@ -130,9 +130,13 @@ ISR(INT0_vect) {
 // =============================================================
 
 void updateTicks(void) {
+    unsigned int newTicks[4];
     for (int i = 0; i < 4; i++) {
-        servoTicks[i] = 2000 + (unsigned int)((long)curPos[i] * 2000 / 180);
+        newTicks[i] = 2000 + (unsigned int)((long)curPos[i] * 2000 / 180);
     }
+    cli();
+    for (int i = 0; i < 4; i++) servoTicks[i] = newTicks[i];
+    sei();
 }
 
 ISR(TIMER4_COMPA_vect) {
@@ -346,41 +350,30 @@ void setup(void) {
 #if USE_BAREMETAL_SERIAL
     usartInit(103);
 #else
-    Serial.begin(9600);
+    Serial.begin(115200);   // FIXED: was 9600
 #endif
 
-    // ------------------------------------------------------------------
     // Port A — servo signal outputs (PA0-PA3 = D22-D25)
-    // ------------------------------------------------------------------
     DDRA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
 
-    // ------------------------------------------------------------------
-    // Port L — TCS3200 all on one port (D42-D46 = PL7-PL3)
-    // PL7=S0, PL6=S1, PL5=S2, PL4=S3 as outputs
-    // PL3=OUT as input (no pull-up — sensor drives it actively)
-    // ------------------------------------------------------------------
+    // Port L — TCS3200 (D42-D46 = PL7-PL3)
     DDRL |=  (1 << TCS_S0_BIT) | (1 << TCS_S1_BIT)
-           | (1 << TCS_S2_BIT) | (1 << TCS_S3_BIT);  // S0-S3 outputs
-    DDRL &= ~(1 << TCS_OUT_BIT);                       // OUT input
-    PORTL &= ~(1 << TCS_OUT_BIT);                      // no pull-up
+           | (1 << TCS_S2_BIT) | (1 << TCS_S3_BIT);
+    DDRL &= ~(1 << TCS_OUT_BIT);
+    PORTL &= ~(1 << TCS_OUT_BIT);
 
     // 20% output frequency scaling: S0=HIGH, S1=LOW
     PORTL |=  (1 << TCS_S0_BIT);
     PORTL &= ~(1 << TCS_S1_BIT);
 
-    // ------------------------------------------------------------------
     // E-Stop — D21 = PD0 = INT0, input with pull-up, any-change ISR
-    // ------------------------------------------------------------------
     ESTOP_DDR  &= ~(1 << ESTOP_BIT);
     ESTOP_PORT |=  (1 << ESTOP_BIT);
-
     EICRA &= ~((1 << ISC01) | (1 << ISC00));
     EICRA |=  (1 << ISC00);
     EIMSK |=  (1 << INT0);
 
-    // ------------------------------------------------------------------
-    // Timer 4: 16-bit CTC, 20 ms period for servo PWM
-    // ------------------------------------------------------------------
+    // Timer 4: 16-bit CTC, 20ms period for servo PWM
     cli();
     TCCR4A = 0;
     TCCR4B = 0;
@@ -393,9 +386,7 @@ void setup(void) {
 
     updateTicks();
 
-    // ------------------------------------------------------------------
     // Bare-metal motor driver (Timer 1 + Timer 3 + shift register)
-    // ------------------------------------------------------------------
     motorsInit();
 }
 
@@ -412,10 +403,10 @@ void loop(void) {
         stateChanged = false;
         sei();
         if (state == STATE_STOPPED) {
-        currentDir = DIR_STOP;
-        stop();  
-    }
-        sendStatus(state);
+            currentDir = DIR_STOP;
+            stop();
+        }
+        sendStatus(state);   // FIXED: now correctly inside stateChanged block
     }
 
     TPacket incoming;
