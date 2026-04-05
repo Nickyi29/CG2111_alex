@@ -2,22 +2,7 @@
  * alex_control.ino
  * CG2111A — Alex Robot
  *
- * CHANGES FROM PREVIOUS VERSION:
- *
- *  TCS3200 all 5 pins moved further down to D42-D46 (Port L)
- *  because wires were still too short to reach D31-D35.
- *
- *  D42 PL7  TCS3200 S0  (was D31 PC6)
- *  D43 PL6  TCS3200 S1  (was D32 PC5)
- *  D44 PL5  TCS3200 S2  (was D33 PC4)
- *  D45 PL4  TCS3200 S3  (was D34 PC3)
- *  D46 PL3  TCS3200 OUT (was D35 PC2)
- *
- *  All 5 TCS wires now cluster at D42-D46, physically consecutive.
- *  D44-D46 are Timer 5 OC pins but Timer 5 is unused — safe as GPIO.
- *  One DDRL write in setup() configures all TCS pins at once.
- *
- * Full pin summary:
+pin summary:
  *   D21 PD0 INT0   E-Stop button
  *   D22 PA0        Base servo signal
  *   D23 PA1        Shoulder servo signal
@@ -313,6 +298,13 @@ static void handleCommand(const TPacket *cmd) {
             sendResponse(RESP_OK, motorSpeed);
             break;
         }
+
+        case COMMAND_STOP:
+            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
+            currentDir = DIR_STOP;
+            stop();
+            sendResponse(RESP_OK, 0);
+            break;
 
         case COMMAND_ARM_BASE:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
