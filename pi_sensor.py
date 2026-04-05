@@ -183,11 +183,12 @@ def printPacket(pkt):
     cmd   = pkt['command']
 
     if ptype == PACKET_TYPE_RESPONSE:
-        if cmd == RESP_OK:
-            new_speed = pkt['params'][0]
-            pct = round(new_speed / 255 * 100)
-            print(f"Speed updated -> {new_speed}/255 ({pct}%)")
-
+      if cmd == RESP_OK:
+          new_speed = pkt['params'][0]
+       if new_speed > 0:
+          pct = round(new_speed / 255 * 100)
+          print(f"Speed updated -> {new_speed}/255 ({pct}%)")
+         
         elif cmd == RESP_STATUS:
             state        = pkt['params'][0]
             _estop_state = state
