@@ -2,10 +2,9 @@
 """
 Studio 16: Robot Integration
 second_terminal.py - Second operator terminal.
-
-Updated to match the fixed pi_sensor.py constants and packet format.
 """
 
+import os
 import select
 import struct
 import sys
@@ -22,7 +21,11 @@ PI_HOST = 'localhost'
 PI_PORT = 65432
 
 TLS_ENABLED = False
-TLS_CERT_PATH = 'certs/server.crt'
+
+# Path relative to this script file — works regardless of run directory
+_DIR = os.path.dirname(os.path.abspath(__file__))
+TLS_CERT_PATH = os.path.join(_DIR, '..', 'certs', 'server.crt')
+
 
 def _make_client_ssl_context():
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -31,21 +34,22 @@ def _make_client_ssl_context():
     ctx.check_hostname = False
     return ctx
 
+
 # ---------------------------------------------------------------------------
 # TPacket constants
 # ---------------------------------------------------------------------------
 
-PACKET_TYPE_COMMAND = 0
+PACKET_TYPE_COMMAND  = 0
 PACKET_TYPE_RESPONSE = 1
-PACKET_TYPE_MESSAGE = 2
+PACKET_TYPE_MESSAGE  = 2
 
-COMMAND_ESTOP = 0
-COMMAND_COLOR = 1
-COMMAND_FORWARD = 2
-COMMAND_BACKWARD = 3
-COMMAND_LEFT = 4
-COMMAND_RIGHT = 5
-COMMAND_SPEED = 6
+COMMAND_ESTOP        = 0
+COMMAND_COLOR        = 1
+COMMAND_FORWARD      = 2
+COMMAND_BACKWARD     = 3
+COMMAND_LEFT         = 4
+COMMAND_RIGHT        = 5
+COMMAND_SPEED        = 6
 COMMAND_ARM_BASE     = 7
 COMMAND_ARM_SHOULDER = 8
 COMMAND_ARM_ELBOW    = 9
@@ -54,19 +58,19 @@ COMMAND_ARM_HOME     = 11
 COMMAND_ARM_SPEED    = 12
 COMMAND_STOP         = 13
 
-RESP_OK = 0
+RESP_OK     = 0
 RESP_STATUS = 1
-RESP_COLOR = 2
+RESP_COLOR  = 2
 
 STATE_RUNNING = 0
 STATE_STOPPED = 1
 
-MAX_STR_LEN = 32
+MAX_STR_LEN  = 32
 PARAMS_COUNT = 16
 TPACKET_SIZE = 1 + 1 + 2 + MAX_STR_LEN + (PARAMS_COUNT * 4)
-TPACKET_FMT = f'<BB2x{MAX_STR_LEN}s{PARAMS_COUNT}I'
+TPACKET_FMT  = f'<BB2x{MAX_STR_LEN}s{PARAMS_COUNT}I'
 
-MAGIC = b'\xDE\xAD'
+MAGIC      = b'\xDE\xAD'
 FRAME_SIZE = len(MAGIC) + TPACKET_SIZE + 1
 
 
@@ -95,17 +99,15 @@ def _packFrame(packetType, command, data=b'', params=None):
 def _unpackFrame(frame: bytes):
     if len(frame) != FRAME_SIZE or frame[:2] != MAGIC:
         return None
-
     raw = frame[2:2 + TPACKET_SIZE]
     if frame[-1] != _computeChecksum(raw):
         return None
-
     fields = struct.unpack(TPACKET_FMT, raw)
     return {
         'packetType': fields[0],
-        'command': fields[1],
-        'data': fields[2],
-        'params': list(fields[3:]),
+        'command':    fields[1],
+        'data':       fields[2],
+        'params':     list(fields[3:]),
     }
 
 
@@ -116,13 +118,14 @@ def _printPacket(pkt):
     global _estop_active
 
     ptype = pkt['packetType']
-    cmd = pkt['command']
+    cmd   = pkt['command']
 
     if ptype == PACKET_TYPE_RESPONSE:
         if cmd == RESP_OK:
             new_speed = pkt['params'][0]
-            pct = round(new_speed / 255 * 100)
-            print(f"[robot] Speed updated -> {new_speed}/255 ({pct}%)")
+            if new_speed > 0:   # FIXED: guard against COMMAND_STOP sending param=0
+                pct = round(new_speed / 255 * 100)
+                print(f"[robot] Speed updated -> {new_speed}/255 ({pct}%)")
 
         elif cmd == RESP_STATUS:
             state = pkt['params'][0]
@@ -210,21 +213,24 @@ def _handleInput(line: str, client: TCPClient):
         print('[second_terminal] Sent: GRIPPER CLOSE')
 
     else:
-        print(f"[second_terminal] Unknown: '{line}'. Valid: e=estop h=home j/r=base i/k=shoulder u/o=elbow n/m=gripper q=quit")
+        print(f"[second_terminal] Unknown: '{line}'. "
+              f"Valid: e=estop h=home j/r=base i/k=shoulder u/o=elbow n/m=gripper q=quit")
 
 
 def run():
-    ssl_ctx = _make_client_ssl_context() if TLS_ENABLED else None                                   #sets up TLS handshake b/w first and second device
-    client = TCPClient(host=PI_HOST, port=PI_PORT, ssl_context=ssl_ctx, server_hostname=PI_HOST)
+    ssl_ctx = _make_client_ssl_context() if TLS_ENABLED else None
+    client = TCPClient(host=PI_HOST, port=PI_PORT,
+                       ssl_context=ssl_ctx, server_hostname=PI_HOST)
     print(f'[second_terminal] Connecting to pi_sensor.py at {PI_HOST}:{PI_PORT}...')
 
     if not client.connect(timeout=10.0):
         print('[second_terminal] Could not connect.')
-        print(' Make sure pi_sensor.py is running and waiting for a second terminal connection.')
+        print(' Make sure pi_sensor.py is running and waiting for a connection.')
         sys.exit(1)
 
     print('[second_terminal] Connected!')
-    print('[second_terminal] Commands: e = E-Stop q = quit')
+    print('[second_terminal] Commands: e=estop h=home j/r=base '
+          'i/k=shoulder u/o=elbow n/m=gripper q=quit')
     print('[second_terminal] Incoming robot packets will be printed below.\n')
 
     try:
@@ -234,7 +240,6 @@ def run():
                 if frame is None:
                     print('[second_terminal] Connection to pi_sensor.py closed.')
                     break
-
                 pkt = _unpackFrame(frame)
                 if pkt:
                     _printPacket(pkt)
