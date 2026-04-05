@@ -332,7 +332,7 @@ def handleUserInput(line):
 
 def runCommandInterface():
     print("Sensor interface ready.")
-    print("Controls: w=forward s=backward a=left d=right" x=stop")
+    print("Controls: w=forward s=backward a=left d=right x=stop")
     print(" e=estop  c=color  p=camera  l=lidar")
     print(" +=speed up  -=speed down")
     print("Press Ctrl+C to exit.\n")
