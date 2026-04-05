@@ -21,7 +21,7 @@ from net_utils import TCPClient, sendTPacketFrame, recvTPacketFrame
 PI_HOST = 'localhost'
 PI_PORT = 65432
 
-TLS_ENABLED = True
+TLS_ENABLED = False
 TLS_CERT_PATH = 'certs/server.crt'
 
 def _make_client_ssl_context():
