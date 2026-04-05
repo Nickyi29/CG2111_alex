@@ -37,6 +37,7 @@ typedef enum {
     COMMAND_ARM_GRIPPER  = 10,
     COMMAND_ARM_HOME     = 11,
     COMMAND_ARM_SPEED    = 12,
+    COMMAND_STOP         = 13,
 } TCommandType;
 
 typedef enum {
