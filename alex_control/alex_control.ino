@@ -2,26 +2,6 @@
  * alex_control.ino
  * CG2111A — Alex Robot
  *
- * Pin summary:
- *   D21 PD0 INT0   E-Stop button
- *   D22 PA0        Base servo signal
- *   D23 PA1        Shoulder servo signal
- *   D24 PA2        Elbow servo signal
- *   D25 PA3        Gripper servo signal
- *   D42 PL7        TCS3200 S0 (output)
- *   D43 PL6        TCS3200 S1 (output)
- *   D44 PL5        TCS3200 S2 (output)
- *   D45 PL4        TCS3200 S3 (output)
- *   D46 PL3        TCS3200 OUT (input, polled)
- *   D18 PD3 INT3   Left encoder (optional)
- *   D19 PD2 INT2   Right encoder (optional)
- *   D3  PE5 OC3C   Motor M3/M4 PWM — shield internal
- *   D11 PB5 OC1A   Motor M1/M2 PWM — shield internal
- *   D4  PG5        Shift reg CLK   — shield internal
- *   D7  PH4        Shift reg OE    — shield internal
- *   D8  PH5        Shift reg DATA  — shield internal
- *   D12 PB6        Shift reg LATCH — shield internal
- */
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
