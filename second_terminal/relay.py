@@ -33,7 +33,7 @@ import ssl
 from .net_utils import TCPServer, sendTPacketFrame, recvTPacketFrame
 
 SECOND_TERM_PORT = 65432
-SECOND_TERM_TIMEOUT = 300
+SECOND_TERM_TIMEOUT = 30
 
 TLS_ENABLED = False
 TLS_CERT_PATH = 'certs/server.crt'
