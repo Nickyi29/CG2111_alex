@@ -3,7 +3,6 @@
  * CG2111A — Alex Robot
  *
  * Serial transport layer and packet framing.
- * No changes from original.
  */
 
 #pragma once
