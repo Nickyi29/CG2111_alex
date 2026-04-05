@@ -119,7 +119,6 @@ ISR(INT0_vect) {
     if (buttonState == STATE_RUNNING && pressed) {
         buttonState  = STATE_STOPPED;
         stateChanged = true;
-        stop();
     } else if (buttonState == STATE_STOPPED && !pressed) {
         buttonState  = STATE_RUNNING;
         stateChanged = true;
@@ -303,7 +302,6 @@ static void handleCommand(const TPacket *cmd) {
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             currentDir = DIR_STOP;
             stop();
-            sendResponse(RESP_OK, 0);
             break;
 
         case COMMAND_ARM_BASE:
@@ -413,6 +411,10 @@ void loop(void) {
         TState state = buttonState;
         stateChanged = false;
         sei();
+        if (state == STATE_STOPPED) {
+        currentDir = DIR_STOP;
+        stop();  
+    }
         sendStatus(state);
     }
 
