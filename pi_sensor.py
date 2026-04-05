@@ -370,6 +370,7 @@ def runCommandInterface():
 
 if __name__ == '__main__':
     openSerial()
+    openCamera()
     relay.start()
 
     try:
