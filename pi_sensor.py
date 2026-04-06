@@ -180,10 +180,14 @@ def printPacket(pkt):
 
     if ptype == PACKET_TYPE_RESPONSE:
         if cmd == RESP_OK:
-            new_speed = pkt['params'][0]
-            if new_speed > 0:
-                pct = round(new_speed / 255 * 100)
-                print(f"Speed updated -> {new_speed}/255 ({pct}%)")
+            debug_str = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
+            val = pkt['params'][0]
+            # Arm ACK: data field contains joint name (e.g. "BASE", "SHOULDER")
+            if debug_str in ('BASE', 'SHOULDER', 'ELBOW', 'GRIPPER', 'HOME'):
+                print(f"Arm accepted: {debug_str} -> {val} deg")
+            elif val > 0:
+                pct = round(val / 255 * 100)
+                print(f"Speed updated -> {val}/255 ({pct}%)")
 
         elif cmd == RESP_STATUS:
             state        = pkt['params'][0]
@@ -199,9 +203,11 @@ def printPacket(pkt):
         else:
             print(f"Response: unknown command {cmd}")
 
-        debug = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
-        if debug:
-            print(f"Arduino debug: {debug}")
+        # For arm ACKs, data is the joint name — already displayed above.
+        # For other responses (SPEED, etc.), print any debug string from Arduino.
+        debug_str_raw = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
+        if debug_str_raw and debug_str_raw not in ('BASE', 'SHOULDER', 'ELBOW', 'GRIPPER', 'HOME'):
+            print(f"Arduino debug: {debug_str_raw}")
 
     elif ptype == PACKET_TYPE_MESSAGE:
         msg = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
