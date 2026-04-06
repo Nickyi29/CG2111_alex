@@ -2,23 +2,12 @@
  * alex_control.ino
  * CG2111A — Alex Robot
  *
- * Pin summary:
- *   D21 PD0 INT0   E-Stop button (input, pull-up, any-change ISR)
- *   D22 PA0        Base servo signal
- *   D23 PA1        Shoulder servo signal
- *   D24 PA2        Elbow servo signal
- *   D25 PA3        Gripper servo signal
- *   D42 PL7        TCS3200 S0 (output)
- *   D43 PL6        TCS3200 S1 (output)
- *   D44 PL5        TCS3200 S2 (output)
- *   D45 PL4        TCS3200 S3 (output)
- *   D46 PL3        TCS3200 OUT (input, polled)
- *   D3  PE5 OC3C   Motor PWM secondary — shield internal
- *   D11 PB5 OC1A   Motor PWM primary   — shield internal
- *   D4  PG5        Shift reg CLK       — shield internal
- *   D7  PH4        Shift reg OE        — shield internal
- *   D8  PH5        Shift reg DATA      — shield internal
- *   D12 PB6        Shift reg LATCH     — shield internal
+ * CHANGE FROM PREVIOUS VERSION:
+ *   Fixed race condition in servoUpdate() wrap detection.
+ *   servoStartTick captured TCNT4 before CTC reset, causing
+ *   elapsed < servoStartTick to trigger immediately and force
+ *   all servo pins LOW — giving servos a 0-duration pulse.
+ *   Fixed by replacing wrap detection with a simple 2.5ms timeout.
  */
 
 #include <avr/io.h>
@@ -48,7 +37,7 @@ volatile int          curPos[4]       = {90, 90, 90, 90};
 int                   targetPos[4]    = {90, 90, 90, 90};
 int                   msPerDeg        = 10;
 unsigned long         lastMoveTime[4] = {0, 0, 0, 0};
-volatile unsigned int servoTicks[4];
+volatile unsigned int servoTicks[4] = {3000, 3000, 3000, 3000}; // 90° default = 1500us pulse
 
 // Non-blocking servo state machine
 volatile bool servoActive     = false;
@@ -141,29 +130,42 @@ void updateTicks(void) {
     sei();
 }
 
-// ISR fires every 20ms — takes ~2us, does not block serial RX
+// ISR fires every 20ms — takes ~2µs, does not block serial RX
 ISR(TIMER4_COMPA_vect) {
+    // All servo pins HIGH — start of pulse window
     PORTA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
+
+    // Reset state machine flags
     servoPinDone[0] = false;
     servoPinDone[1] = false;
     servoPinDone[2] = false;
     servoPinDone[3] = false;
     servoActive     = true;
+
+    // ISR exits immediately — loop() handles pulling pins LOW
+    // Note: servoStartTick removed — was causing race condition
+    // because TCNT4 resets to 0 in CTC mode immediately after match
 }
 
 // Called every loop() iteration to complete the servo pulse.
-// 5000 ticks = 2.5ms timeout (longest valid pulse = 2ms = 4000 ticks).
+// Uses TCNT4 directly — in CTC mode TCNT4 counts 0 to 40000 (20ms).
+// servoTicks values are 2000-4000 (1ms-2ms), well within the 20ms window.
+// Simple timeout at 5000 ticks (2.5ms) cleans up if loop() is slow.
 void servoUpdate(void) {
     if (!servoActive) return;
 
     unsigned int elapsed = TCNT4;
 
+    // Safety timeout — 5000 ticks = 2.5ms
+    // Longest valid servo pulse is 2ms (4000 ticks)
+    // If we are past 2.5ms, force all pins LOW and finish
     if (elapsed > 5000) {
         PORTA &= ~(BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
         servoActive = false;
         return;
     }
 
+    // Pull each pin LOW when its tick count is reached
     if (!servoPinDone[0] && elapsed >= servoTicks[0]) {
         PORTA &= ~BASE_PIN;
         servoPinDone[0] = true;
@@ -181,6 +183,7 @@ void servoUpdate(void) {
         servoPinDone[3] = true;
     }
 
+    // All pins done — mark pulse complete
     if (servoPinDone[0] && servoPinDone[1] &&
         servoPinDone[2] && servoPinDone[3]) {
         servoActive = false;
@@ -253,9 +256,28 @@ static uint32_t measureChannelHz(bool s2High, bool s3High) {
 }
 
 static void readColorChannels(uint32_t *r, uint32_t *g, uint32_t *b) {
-    *r = measureChannelHz(false, false);  // S2=L S3=L -> red
-    *g = measureChannelHz(true,  true);   // S2=H S3=H -> green
-    *b = measureChannelHz(false, true);   // S2=L S3=H -> blue
+    *r = measureChannelHz(false, false);  // S2=L S3=L → red
+    *g = measureChannelHz(true,  true);   // S2=H S3=H → green
+    *b = measureChannelHz(false, true);   // S2=L S3=H → blue
+}
+
+// =============================================================
+// Arm command acknowledgement helper
+// Sends RESP_OK with the accepted target degree so both terminals
+// can confirm the Arduino actually received and accepted the command.
+// Without this, a silent E-Stop rejection looks identical to acceptance
+// from the operator's perspective.
+// =============================================================
+
+static void sendArmAck(const char *joint, uint32_t targetDeg) {
+    TPacket pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.packetType = PACKET_TYPE_RESPONSE;
+    pkt.command    = RESP_OK;
+    pkt.params[0]  = targetDeg;
+    strncpy(pkt.data, joint, sizeof(pkt.data) - 1);
+    pkt.data[sizeof(pkt.data) - 1] = '\0';
+    sendFrame(&pkt);
 }
 
 // =============================================================
@@ -346,26 +368,31 @@ static void handleCommand(const TPacket *cmd) {
         case COMMAND_ARM_BASE:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[0] = constrain((int)cmd->params[0], BASE_MIN, BASE_MAX);
+            sendArmAck("BASE", (uint32_t)targetPos[0]);
             break;
 
         case COMMAND_ARM_SHOULDER:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[1] = constrain((int)cmd->params[0], SHOULDER_MIN, SHOULDER_MAX);
+            sendArmAck("SHOULDER", (uint32_t)targetPos[1]);
             break;
 
         case COMMAND_ARM_ELBOW:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[2] = constrain((int)cmd->params[0], ELBOW_MIN, ELBOW_MAX);
+            sendArmAck("ELBOW", (uint32_t)targetPos[2]);
             break;
 
         case COMMAND_ARM_GRIPPER:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[3] = constrain((int)cmd->params[0], GRIPPER_MIN, GRIPPER_MAX);
+            sendArmAck("GRIPPER", (uint32_t)targetPos[3]);
             break;
 
         case COMMAND_ARM_HOME:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             for (int i = 0; i < 4; i++) targetPos[i] = 90;
+            sendArmAck("HOME", 90);
             break;
 
         case COMMAND_ARM_SPEED:
@@ -396,8 +423,8 @@ void setup(void) {
            | (1 << TCS_S2_BIT) | (1 << TCS_S3_BIT);
     DDRL &= ~(1 << TCS_OUT_BIT);
     PORTL &= ~(1 << TCS_OUT_BIT);
-    PORTL |=  (1 << TCS_S0_BIT);   // S0 HIGH
-    PORTL &= ~(1 << TCS_S1_BIT);   // S1 LOW  -> 20% scaling
+    PORTL |=  (1 << TCS_S0_BIT);
+    PORTL &= ~(1 << TCS_S1_BIT);
 
     // E-Stop — D21 = PD0 = INT0, input with pull-up, any-change ISR
     ESTOP_DDR  &= ~(1 << ESTOP_BIT);
@@ -407,6 +434,9 @@ void setup(void) {
     EIMSK |=  (1 << INT0);
 
     // Timer 4: 16-bit CTC, 20ms period for servo PWM
+    // updateTicks() is called BEFORE cli() so its internal cli/sei runs cleanly,
+    // and servoTicks are valid before the very first ISR fires.
+    updateTicks();
     cli();
     TCCR4A = 0;
     TCCR4B = 0;
@@ -417,7 +447,6 @@ void setup(void) {
     TIMSK4 |= (1 << OCIE4A);
     sei();
 
-    updateTicks();
     motorsInit();
 }
 
@@ -426,9 +455,21 @@ void setup(void) {
 // =============================================================
 
 void loop(void) {
+    // On the very first loop iteration, broadcast STATUS_RUNNING so both
+    // operator terminals know the Arduino started up in a RUNNING state.
+    static bool startupBroadcastDone = false;
+    if (!startupBroadcastDone) {
+        sendStatus(STATE_RUNNING);
+        startupBroadcastDone = true;
+    }
+
+    // Complete servo pulse — non-blocking, replaces old busy-wait ISR
     servoUpdate();
+
+    // Step arm joints towards target positions
     processMovement();
 
+    // Handle E-Stop state changes
     if (stateChanged) {
         cli();
         TState state = buttonState;
@@ -441,6 +482,7 @@ void loop(void) {
         sendStatus(state);
     }
 
+    // Receive and process one TPacket per loop iteration
     TPacket incoming;
     if (receiveFrame(&incoming)) {
         handleCommand(&incoming);
