@@ -5,17 +5,21 @@
  * CHANGES FROM PREVIOUS VERSION:
  *
  * 1. PWM frequency lowered — prescaler changed from 8 to 64
- *    Old: 16MHz / 8  / 256 = 7812 Hz → too high for L293D, causes ringing
- *    New: 16MHz / 64 / 256 =  976 Hz → within L293D spec, no ringing
+ *    Old: 16MHz / 8  / 256 = 7812 Hz -> too high for L293D, causes ringing
+ *    New: 16MHz / 64 / 256 =  976 Hz -> within L293D spec, no ringing
  *
  * 2. Both L293D chips now driven from OCR1A (Timer1/D11) only
  *    OCR3C (Timer3/D3) is not connected to either L293D enable pin
- *    on this shield version — setting it had no effect
- *    OCR3C is still set alongside OCR1A in case shield is rewired
+ *    on this shield version — setting it had no effect.
+ *    OCR3C is still set alongside OCR1A in case shield is rewired.
  *
- * 3. M1/M2 and M3/M4 bit assignments swapped to match physical wiring
- *    Bits 0x01-0x08 were driving left side, now correctly assigned
- *    Bits 0x10-0x80 were driving right side, now correctly assigned
+ * 3. Bit assignments updated to match physical wiring:
+ *    Bits 0x01-0x08 control LEFT side motors (Front Left, Back Left)
+ *    Bits 0x10-0x80 control RIGHT side motors (Front Right, Back Right)
+ *
+ * NOTE ON BACK-LEFT MOTOR:
+ *    If back-left never responds, check its wires are firmly seated
+ *    in the M2 terminal block. If wires are secure, swap M1/M2 defines.
  */
 
 // =============================================================
@@ -30,9 +34,14 @@
 
 // =============================================================
 // Shift register bit positions
-// Based on observed behaviour from motor test:
-// Bits 0x01-0x08 control LEFT side motors (Front Left, Back Left)
-// Bits 0x10-0x80 control RIGHT side motors (Front Right, Back Right)
+// Based on observed behaviour:
+//   w/s (all-IN1/IN2): RIGHT wheels spin  -> right motors on 0x10/0x20/0x40/0x80
+//   d/a (mixed):       FRONT wheels spin  -> front motors respond to mixed pattern
+//
+// M1 = FRONT LEFT
+// M2 = BACK LEFT
+// M3 = BACK RIGHT
+// M4 = FRONT RIGHT
 // =============================================================
 
 // M1 = FRONT LEFT
@@ -77,7 +86,6 @@ static void srWrite(uint8_t data) {
 // =============================================================
 
 void motorsInit(void) {
-    // Shift register pins as outputs
     DDRG  |= (1 << PG5);   // D4  CLK
     DDRH  |= (1 << PH4);   // D7  OE
     DDRH  |= (1 << PH5);   // D8  DATA
@@ -86,29 +94,21 @@ void motorsInit(void) {
     // OE active LOW — enable shift register outputs
     PORTH &= ~(1 << PH4);
 
-    // PWM output pins as outputs
     DDRB  |= (1 << PB5);   // D11 OC1A — main PWM for all motors
     DDRE  |= (1 << PE5);   // D3  OC3C — secondary (may not be connected)
 
-    // ------------------------------------------------------------------
     // Timer 1: Fast PWM 8-bit, non-inverting on OC1A (D11)
-    // Prescaler 64 → frequency = 16MHz / 64 / 256 = 976 Hz
-    // This is within the L293D recommended range and eliminates ringing
-    // ------------------------------------------------------------------
+    // Prescaler 64 -> frequency = 16MHz / 64 / 256 = 976 Hz
     TCCR1A = (1 << COM1A1) | (1 << WGM10);
     TCCR1B = (1 << WGM12)  | (1 << CS11) | (1 << CS10);  // prescaler 64
     OCR1A  = 0;
 
-    // ------------------------------------------------------------------
     // Timer 3: Fast PWM 8-bit, non-inverting on OC3C (D3)
-    // Also prescaler 64 for consistency
-    // May not be connected on this shield version but set anyway
-    // ------------------------------------------------------------------
+    // Prescaler 64 for consistency — set even if not connected
     TCCR3A = (1 << COM3C1) | (1 << WGM30);
     TCCR3B = (1 << WGM32)  | (1 << CS31) | (1 << CS30);  // prescaler 64
     OCR3C  = 0;
 
-    // All motors stopped
     srWrite(0x00);
 }
 
@@ -133,12 +133,12 @@ void move(int speed, int direction) {
             break;
 
         case CW:
-            // Clockwise: left wheels forward, right wheels backward
+            // Clockwise (right turn): left wheels forward, right wheels backward
             sr = M1_IN1 | M2_IN1 | M3_IN2 | M4_IN2;
             break;
 
         case CCW:
-            // Counter-clockwise: right wheels forward, left wheels backward
+            // Counter-clockwise (left turn): right wheels forward, left wheels backward
             sr = M3_IN1 | M4_IN1 | M1_IN2 | M2_IN2;
             break;
 
