@@ -1,21 +1,11 @@
 /*
  * packets.h
  * CG2111A — Alex Robot
- *
- * TPacket protocol: enums, struct, and framing constants.
- * Must be kept in sync with pi_sensor.py and second_terminal.py.
- *
- * CHANGES FROM ORIGINAL:
- *   - Fixed missing commas in TCommandType enum (caused compile error)
  */
 
 #pragma once
 
 #include <stdint.h>
-
-// =============================================================
-// TPacket protocol
-// =============================================================
 
 typedef enum {
     PACKET_TYPE_COMMAND  = 0,
@@ -58,10 +48,6 @@ typedef struct {
     char     data[32];
     uint32_t params[16];
 } TPacket;
-
-// =============================================================
-// Framing constants
-// =============================================================
 
 #define MAGIC_HI     0xDE
 #define MAGIC_LO     0xAD
