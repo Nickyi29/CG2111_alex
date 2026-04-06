@@ -33,19 +33,19 @@
 #define CW       4
 
 // FRONT LEFT  = M4 shield terminal
-#define FL_FWD (1 << 5)   // 0x20  ← was (1<<4)
-#define FL_BWD (1 << 4)   // 0x10  ← was (1<<5)
+#define FL_FWD (1 << 0)   // 0x01
+#define FL_BWD (1 << 6)   // 0x40
 
-// FRONT RIGHT = M1 shield terminal  ← UNCHANGED
+// FRONT RIGHT = M1 shield terminal
 #define FR_FWD (1 << 2)   // 0x04
 #define FR_BWD (1 << 3)   // 0x08
 
-// BACK LEFT   = M3 shield terminal  ← UNCHANGED (wire disconnected)
+// BACK LEFT   = M3 shield terminal (mounted in reverse)
 #define BL_FWD (1 << 7)   // 0x80
-#define BL_BWD (1 << 6)   // 0x40
+#define BL_BWD (1 << 5)   // 0x20
 
-// BACK RIGHT  = M2 shield terminal  ← UNCHANGED
-#define BR_FWD (1 << 0)   // 0x01
+// BACK RIGHT  = M2 shield terminal (mounted in reverse)
+#define BR_FWD (1 << 4)   // 0x10
 #define BR_BWD (1 << 1)   // 0x02
 
 static void srWrite(uint8_t data) {
