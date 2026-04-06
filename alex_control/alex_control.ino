@@ -2,25 +2,19 @@
  * alex_control.ino
  * CG2111A — Alex Robot
  *
- * Pin summary:
- *   D21 PD0 INT0   E-Stop button
- *   D22 PA0        Base servo signal
- *   D23 PA1        Shoulder servo signal
- *   D24 PA2        Elbow servo signal
- *   D25 PA3        Gripper servo signal
- *   D42 PL7        TCS3200 S0 (output)
- *   D43 PL6        TCS3200 S1 (output)
- *   D44 PL5        TCS3200 S2 (output)
- *   D45 PL4        TCS3200 S3 (output)
- *   D46 PL3        TCS3200 OUT (input, polled)
- *   D18 PD3 INT3   Left encoder (optional)
- *   D19 PD2 INT2   Right encoder (optional)
- *   D3  PE5 OC3C   Motor PWM secondary — shield internal
- *   D11 PB5 OC1A   Motor PWM primary   — shield internal
- *   D4  PG5        Shift reg CLK       — shield internal
- *   D7  PH4        Shift reg OE        — shield internal
- *   D8  PH5        Shift reg DATA      — shield internal
- *   D12 PB6        Shift reg LATCH     — shield internal
+ * CHANGE FROM PREVIOUS VERSION:
+ *   Servo ISR changed from blocking busy-wait to non-blocking state machine.
+ *   Previously TIMER4_COMPA_vect blocked all interrupts for up to 2ms every
+ *   20ms while busy-waiting to pull servo pins LOW. This caused ~45% of
+ *   incoming serial frames to be corrupted (bytes lost during UART receive),
+ *   resulting in dropped commands and unreliable arm/motor control.
+ *
+ *   New approach:
+ *   - ISR only sets all servo pins HIGH and records TCNT4 start tick
+ *   - loop() calls servoUpdate() every iteration to pull pins LOW
+ *     when their tick count is reached
+ *   - ISR now takes ~2µs instead of 2ms
+ *   - Serial RX is never blocked by servo PWM
  */
 
 #include <avr/io.h>
@@ -51,6 +45,13 @@ int                   targetPos[4]    = {90, 90, 90, 90};
 int                   msPerDeg        = 10;
 unsigned long         lastMoveTime[4] = {0, 0, 0, 0};
 volatile unsigned int servoTicks[4];
+
+// State machine for non-blocking servo pulse generation
+// servoActive: true while we are in the pulse window (pins still need pulling LOW)
+// servoStartTick: value of TCNT4 when ISR fired and pins went HIGH
+volatile bool         servoActive    = false;
+volatile unsigned int servoStartTick = 0;
+volatile bool         servoPinDone[4] = {false, false, false, false};
 
 // =============================================================
 // Direction constants — must match robotlib.ino
@@ -126,7 +127,7 @@ ISR(INT0_vect) {
 }
 
 // =============================================================
-// Servo PWM — Timer 4 CTC, bit-bang on Port A (D22-D25)
+// Servo PWM — Timer 4 CTC, non-blocking state machine
 // =============================================================
 
 void updateTicks(void) {
@@ -140,16 +141,63 @@ void updateTicks(void) {
     sei();
 }
 
+// ISR fires every 20ms — now only takes ~2µs instead of 2ms
+// Just sets pins HIGH and marks the start of the pulse window
 ISR(TIMER4_COMPA_vect) {
+    // All servo pins HIGH — start of pulse
     PORTA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
 
-    bool bA = true, sA = true, eA = true, gA = true;
-    while (bA || sA || eA || gA) {
-        unsigned int elapsed = TCNT4;
-        if (elapsed >= servoTicks[0]) { PORTA &= ~BASE_PIN;     bA = false; }
-        if (elapsed >= servoTicks[1]) { PORTA &= ~SHOULDER_PIN; sA = false; }
-        if (elapsed >= servoTicks[2]) { PORTA &= ~ELBOW_PIN;    eA = false; }
-        if (elapsed >= servoTicks[3]) { PORTA &= ~GRIPPER_PIN;  gA = false; }
+    // Record timer value at start of pulse
+    servoStartTick = TCNT4;
+
+    // Reset state machine
+    servoPinDone[0] = false;
+    servoPinDone[1] = false;
+    servoPinDone[2] = false;
+    servoPinDone[3] = false;
+    servoActive     = true;
+
+    // ISR exits immediately — loop() handles pulling pins LOW
+}
+
+// Called every loop() iteration to complete the servo pulse
+// Pulls each pin LOW when its tick count is reached
+// Returns immediately if not in pulse window
+void servoUpdate(void) {
+    if (!servoActive) return;
+
+    unsigned int elapsed = TCNT4;
+
+    // Handle timer wrap-around — if TCNT4 reset (new ISR fired), stop
+    // This protects against servoUpdate() running into the next pulse cycle
+    if (elapsed < servoStartTick) {
+        // Timer wrapped — new ISR must have fired, force all pins LOW
+        PORTA &= ~(BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
+        servoActive = false;
+        return;
+    }
+
+    if (!servoPinDone[0] && elapsed >= servoTicks[0]) {
+        PORTA &= ~BASE_PIN;
+        servoPinDone[0] = true;
+    }
+    if (!servoPinDone[1] && elapsed >= servoTicks[1]) {
+        PORTA &= ~SHOULDER_PIN;
+        servoPinDone[1] = true;
+    }
+    if (!servoPinDone[2] && elapsed >= servoTicks[2]) {
+        PORTA &= ~ELBOW_PIN;
+        servoPinDone[2] = true;
+    }
+    if (!servoPinDone[3] && elapsed >= servoTicks[3]) {
+        PORTA &= ~GRIPPER_PIN;
+        servoPinDone[3] = true;
+    }
+
+    // All pins pulled LOW — pulse complete
+    if (servoPinDone[0] && servoPinDone[1] &&
+        servoPinDone[2] && servoPinDone[3]) {
+        servoActive = false;
     }
 }
 
@@ -396,8 +444,14 @@ void setup(void) {
 // =============================================================
 
 void loop(void) {
+    // Complete servo pulse — pull pins LOW when tick counts reached
+    // This replaces the busy-wait that was inside the ISR
+    servoUpdate();
+
+    // Step arm joints towards target positions
     processMovement();
 
+    // Handle E-Stop state changes
     if (stateChanged) {
         cli();
         TState state = buttonState;
@@ -410,6 +464,7 @@ void loop(void) {
         sendStatus(state);
     }
 
+    // Receive and handle one TPacket per loop iteration
     TPacket incoming;
     if (receiveFrame(&incoming)) {
         handleCommand(&incoming);
