@@ -448,7 +448,6 @@ void setup(void) {
     sei();
 
     motorsInit();
-    testMotors();  // REMOVE after testing
 }
 
 // =============================================================
