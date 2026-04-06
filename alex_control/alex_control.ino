@@ -399,10 +399,9 @@ void setup(void) {
     OCR4A  = 40000;
     TCCR4B |= (1 << WGM42);
     TCCR4B |= (1 << CS41);
-    updateTicks();           // initialise servoTicks BEFORE enabling the ISR
     TIMSK4 |= (1 << OCIE4A);
     sei();
-
+    updateTicks();
     // Bare-metal motor driver (Timer 1 + Timer 3 + shift register)
     motorsInit();
 }
