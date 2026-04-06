@@ -329,26 +329,31 @@ static void handleCommand(const TPacket *cmd) {
         case COMMAND_ARM_BASE:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[0] = constrain((int)cmd->params[0], BASE_MIN, BASE_MAX);
+            sendResponse(RESP_OK, (uint32_t)targetPos[0]);  // ACK: confirm accepted target
             break;
 
         case COMMAND_ARM_SHOULDER:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[1] = constrain((int)cmd->params[0], SHOULDER_MIN, SHOULDER_MAX);
+            sendResponse(RESP_OK, (uint32_t)targetPos[1]);  // ACK: confirm accepted target
             break;
 
         case COMMAND_ARM_ELBOW:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[2] = constrain((int)cmd->params[0], ELBOW_MIN, ELBOW_MAX);
+            sendResponse(RESP_OK, (uint32_t)targetPos[2]);  // ACK: confirm accepted target
             break;
 
         case COMMAND_ARM_GRIPPER:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[3] = constrain((int)cmd->params[0], GRIPPER_MIN, GRIPPER_MAX);
+            sendResponse(RESP_OK, (uint32_t)targetPos[3]);  // ACK: confirm accepted target
             break;
 
         case COMMAND_ARM_HOME:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             for (int i = 0; i < 4; i++) targetPos[i] = 90;
+            sendResponse(RESP_OK, 90);  // ACK: confirm home accepted
             break;
 
         case COMMAND_ARM_SPEED:
