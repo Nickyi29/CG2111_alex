@@ -2,25 +2,8 @@
  * alex_control.ino
  * CG2111A — Alex Robot
  *
- * Pin summary:
- *   D21 PD0 INT0   E-Stop button
- *   D22 PA0        Base servo signal
- *   D23 PA1        Shoulder servo signal
- *   D24 PA2        Elbow servo signal
- *   D25 PA3        Gripper servo signal
- *   D42 PL7        TCS3200 S0 (output)
- *   D43 PL6        TCS3200 S1 (output)
- *   D44 PL5        TCS3200 S2 (output)
- *   D45 PL4        TCS3200 S3 (output)
- *   D46 PL3        TCS3200 OUT (input, polled)
- *   D18 PD3 INT3   Left encoder (optional)
- *   D19 PD2 INT2   Right encoder (optional)
- *   D3  PE5 OC3C   Motor M3/M4 PWM — shield internal
- *   D11 PB5 OC1A   Motor M1/M2 PWM — shield internal
- *   D4  PG5        Shift reg CLK   — shield internal
- *   D7  PH4        Shift reg OE    — shield internal
- *   D8  PH5        Shift reg DATA  — shield internal
- *   D12 PB6        Shift reg LATCH — shield internal
+ * TEMPORARY: testMotors() called in setup() for bit layout calibration.
+ * Remove the testMotors() call after calibration is done.
  */
 
 #include <avr/io.h>
@@ -40,7 +23,6 @@ const int SHOULDER_MIN = 40,  SHOULDER_MAX = 140;
 const int ELBOW_MIN    = 20,  ELBOW_MAX    = 160;
 const int GRIPPER_MIN  = 10,  GRIPPER_MAX  = 90;
 
-// Servo signal pins — D22-D25 = PA0-PA3
 #define BASE_PIN     (1 << PA0)
 #define SHOULDER_PIN (1 << PA1)
 #define ELBOW_PIN    (1 << PA2)
@@ -50,11 +32,7 @@ volatile int          curPos[4]       = {90, 90, 90, 90};
 int                   targetPos[4]    = {90, 90, 90, 90};
 int                   msPerDeg        = 10;
 unsigned long         lastMoveTime[4] = {0, 0, 0, 0};
-volatile unsigned int servoTicks[4] = {3000, 3000, 3000, 3000}; // 90 deg default (3000 ticks = 1500us)
-
-// =============================================================
-// Direction constants — must match robotlib.ino
-// =============================================================
+volatile unsigned int servoTicks[4];
 
 #define DIR_STOP 0
 #define DIR_GO   1
@@ -62,18 +40,10 @@ volatile unsigned int servoTicks[4] = {3000, 3000, 3000, 3000}; // 90 deg defaul
 #define DIR_CCW  3
 #define DIR_CW   4
 
-// =============================================================
-// Speed limits
-// =============================================================
-
 #define SPEED_MIN     30
 #define SPEED_MAX     255
 #define SPEED_DEFAULT 150
 #define SPEED_STEP    50
-
-// =============================================================
-// Pin definitions
-// =============================================================
 
 // ---- E-Stop: D21 = PD0 = INT0 ----
 #define ESTOP_DDR  DDRD
@@ -81,7 +51,7 @@ volatile unsigned int servoTicks[4] = {3000, 3000, 3000, 3000}; // 90 deg defaul
 #define ESTOP_PINR PIND
 #define ESTOP_BIT  PD0
 
-// ---- TCS3200 control: D42-D45 = PL7-PL4 (outputs) ----
+// ---- TCS3200 control: D42-D45 = PL7-PL4 ----
 #define TCS_CTRL_DDR  DDRL
 #define TCS_CTRL_PORT PORTL
 #define TCS_S0_BIT    PL7
@@ -89,25 +59,17 @@ volatile unsigned int servoTicks[4] = {3000, 3000, 3000, 3000}; // 90 deg defaul
 #define TCS_S2_BIT    PL5
 #define TCS_S3_BIT    PL4
 
-// ---- TCS3200 OUT: D46 = PL3 (input, polled) ----
+// ---- TCS3200 OUT: D46 = PL3 ----
 #define TCS_OUT_DDR  DDRL
 #define TCS_OUT_PORT PORTL
 #define TCS_OUT_PINR PINL
 #define TCS_OUT_BIT  PL3
-
-// =============================================================
-// State
-// =============================================================
 
 volatile TState        buttonState     = STATE_RUNNING;
 volatile bool          stateChanged    = false;
 volatile unsigned long lastButtonIsrMs = 0;
 volatile uint8_t       motorSpeed      = SPEED_DEFAULT;
 volatile uint8_t       currentDir      = DIR_STOP;
-
-// =============================================================
-// E-Stop ISR — INT0 on PD0 (D21)
-// =============================================================
 
 ISR(INT0_vect) {
     unsigned long now = millis();
@@ -125,10 +87,6 @@ ISR(INT0_vect) {
     }
 }
 
-// =============================================================
-// Servo PWM — Timer 4 CTC, bit-bang on Port A (D22-D25)
-// =============================================================
-
 void updateTicks(void) {
     unsigned int newTicks[4];
     for (int i = 0; i < 4; i++) {
@@ -140,39 +98,17 @@ void updateTicks(void) {
 }
 
 ISR(TIMER4_COMPA_vect) {
-    // --- Snapshot tick thresholds while interrupts are still disabled ---
-    // This prevents updateTicks() from changing servoTicks under us mid-pulse.
-    unsigned int t0 = servoTicks[0];
-    unsigned int t1 = servoTicks[1];
-    unsigned int t2 = servoTicks[2];
-    unsigned int t3 = servoTicks[3];
-
-    // Start pulse — raise all four servo signal lines simultaneously
     PORTA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
 
-    // Re-enable global interrupts so Timer0 (millis) and INT0 (E-Stop) can
-    // still fire during the busy-wait below.  Without this, the ~1-2 ms
-    // blocking time starves Timer0, causing millis() to drift by ~10% and
-    // making processMovement() run slower than intended.
-    // Safety: Timer4 COMPA cannot re-fire for another 20 ms (OCR4A = 40000
-    // ticks), so re-entrancy of this ISR is not possible.
-    sei();
-
-    // Lower each pin as soon as TCNT4 reaches its threshold.
-    // Using local copies (t0-t3) avoids re-reading volatile memory each loop.
     bool bA = true, sA = true, eA = true, gA = true;
     while (bA || sA || eA || gA) {
         unsigned int elapsed = TCNT4;
-        if (bA && elapsed >= t0) { PORTA &= ~BASE_PIN;     bA = false; }
-        if (sA && elapsed >= t1) { PORTA &= ~SHOULDER_PIN; sA = false; }
-        if (eA && elapsed >= t2) { PORTA &= ~ELBOW_PIN;    eA = false; }
-        if (gA && elapsed >= t3) { PORTA &= ~GRIPPER_PIN;  gA = false; }
+        if (elapsed >= servoTicks[0]) { PORTA &= ~BASE_PIN;     bA = false; }
+        if (elapsed >= servoTicks[1]) { PORTA &= ~SHOULDER_PIN; sA = false; }
+        if (elapsed >= servoTicks[2]) { PORTA &= ~ELBOW_PIN;    eA = false; }
+        if (elapsed >= servoTicks[3]) { PORTA &= ~GRIPPER_PIN;  gA = false; }
     }
 }
-
-// =============================================================
-// Arm movement — non-blocking
-// =============================================================
 
 void processMovement(void) {
     unsigned long now = millis();
@@ -187,10 +123,6 @@ void processMovement(void) {
     }
 }
 
-// =============================================================
-// Packet helpers
-// =============================================================
-
 static void sendResponse(TResponseType resp, uint32_t param) {
     TPacket pkt;
     memset(&pkt, 0, sizeof(pkt));
@@ -203,10 +135,6 @@ static void sendResponse(TResponseType resp, uint32_t param) {
 static void sendStatus(TState state) {
     sendResponse(RESP_STATUS, (uint32_t)state);
 }
-
-// =============================================================
-// TCS3200 helpers
-// =============================================================
 
 static inline void setTcsFilter(bool s2High, bool s3High) {
     if (s2High) TCS_CTRL_PORT |=  (1 << TCS_S2_BIT);
@@ -236,14 +164,10 @@ static uint32_t measureChannelHz(bool s2High, bool s3High) {
 }
 
 static void readColorChannels(uint32_t *r, uint32_t *g, uint32_t *b) {
-    *r = measureChannelHz(false, false);  // S2=L S3=L → red
-    *g = measureChannelHz(true,  true);   // S2=H S3=H → green
-    *b = measureChannelHz(false, true);   // S2=L S3=H → blue
+    *r = measureChannelHz(false, false);
+    *g = measureChannelHz(true,  true);
+    *b = measureChannelHz(false, true);
 }
-
-// =============================================================
-// Command handler
-// =============================================================
 
 static void handleCommand(const TPacket *cmd) {
     if (cmd->packetType != PACKET_TYPE_COMMAND) return;
@@ -329,31 +253,26 @@ static void handleCommand(const TPacket *cmd) {
         case COMMAND_ARM_BASE:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[0] = constrain((int)cmd->params[0], BASE_MIN, BASE_MAX);
-            sendResponse(RESP_OK, (uint32_t)targetPos[0]);  // ACK: confirm accepted target
             break;
 
         case COMMAND_ARM_SHOULDER:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[1] = constrain((int)cmd->params[0], SHOULDER_MIN, SHOULDER_MAX);
-            sendResponse(RESP_OK, (uint32_t)targetPos[1]);  // ACK: confirm accepted target
             break;
 
         case COMMAND_ARM_ELBOW:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[2] = constrain((int)cmd->params[0], ELBOW_MIN, ELBOW_MAX);
-            sendResponse(RESP_OK, (uint32_t)targetPos[2]);  // ACK: confirm accepted target
             break;
 
         case COMMAND_ARM_GRIPPER:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             targetPos[3] = constrain((int)cmd->params[0], GRIPPER_MIN, GRIPPER_MAX);
-            sendResponse(RESP_OK, (uint32_t)targetPos[3]);  // ACK: confirm accepted target
             break;
 
         case COMMAND_ARM_HOME:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             for (int i = 0; i < 4; i++) targetPos[i] = 90;
-            sendResponse(RESP_OK, 90);  // ACK: confirm home accepted
             break;
 
         case COMMAND_ARM_SPEED:
@@ -365,38 +284,28 @@ static void handleCommand(const TPacket *cmd) {
     }
 }
 
-// =============================================================
-// setup()
-// =============================================================
-
 void setup(void) {
 #if USE_BAREMETAL_SERIAL
-    usartInit(103);
+    usartInit(8);
 #else
-    Serial.begin(115200);   // FIXED: was 9600
+    Serial.begin(115200);
 #endif
 
-    // Port A — servo signal outputs (PA0-PA3 = D22-D25)
     DDRA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
 
-    // Port L — TCS3200 (D42-D46 = PL7-PL3)
     DDRL |=  (1 << TCS_S0_BIT) | (1 << TCS_S1_BIT)
            | (1 << TCS_S2_BIT) | (1 << TCS_S3_BIT);
     DDRL &= ~(1 << TCS_OUT_BIT);
     PORTL &= ~(1 << TCS_OUT_BIT);
-
-    // 20% output frequency scaling: S0=HIGH, S1=LOW
     PORTL |=  (1 << TCS_S0_BIT);
     PORTL &= ~(1 << TCS_S1_BIT);
 
-    // E-Stop — D21 = PD0 = INT0, input with pull-up, any-change ISR
     ESTOP_DDR  &= ~(1 << ESTOP_BIT);
     ESTOP_PORT |=  (1 << ESTOP_BIT);
     EICRA &= ~((1 << ISC01) | (1 << ISC00));
     EICRA |=  (1 << ISC00);
     EIMSK |=  (1 << INT0);
 
-    // Timer 4: 16-bit CTC, 20ms period for servo PWM
     cli();
     TCCR4A = 0;
     TCCR4B = 0;
@@ -406,14 +315,17 @@ void setup(void) {
     TCCR4B |= (1 << CS41);
     TIMSK4 |= (1 << OCIE4A);
     sei();
-    updateTicks();
-    // Bare-metal motor driver (Timer 1 + Timer 3 + shift register)
-    motorsInit();
-}
 
-// =============================================================
-// loop()
-// =============================================================
+    updateTicks();
+    motorsInit();
+
+    // -------------------------------------------------------
+    // TEMPORARY: run motor bit test on startup
+    // Upload, observe which wheel spins for each bit, record
+    // results, then remove this line and re-upload
+    // -------------------------------------------------------
+    testMotors();
+}
 
 void loop(void) {
     processMovement();
@@ -427,7 +339,7 @@ void loop(void) {
             currentDir = DIR_STOP;
             stop();
         }
-        sendStatus(state);   // FIXED: now correctly inside stateChanged block
+        sendStatus(state);
     }
 
     TPacket incoming;
