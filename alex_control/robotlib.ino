@@ -104,33 +104,41 @@ void motorsInit(void) {
 // =============================================================
 
 void testMotors(void) {
+    // Each bit is tested TWICE:
+    // First with OCR1A=150, OCR3C=0   (only Timer1 PWM active)
+    // Then  with OCR1A=0,   OCR3C=150 (only Timer3 PWM active)
+    // This tells us which PWM channel each motor responds to
+
     uint8_t testBits[] = {
         0x01, 0x02, 0x04, 0x08,
         0x10, 0x20, 0x40, 0x80
     };
 
-    // Wait 3 seconds on startup so you have time to put the robot down
-    delay(3000);
+    delay(3000);  // startup delay
 
     for (int i = 0; i < 8; i++) {
-        // Enable both PWM channels at medium speed
-        // This ensures whichever L293D your motor is on gets an enable signal
+
+        // --- Phase A: only Timer1 PWM (OCR1A) ---
+        // If a wheel spins here, that motor is enabled by D11/OC1A
         OCR1A = 150;
-        OCR3C = 150;
-
-        // Fire this bit
+        OCR3C = 0;
         srWrite(testBits[i]);
-
-        // Spin for 2 seconds — watch which wheel moves and which direction
-        delay(2000);
-
-        // Stop
+        delay(3000);   // watch which wheel spins
         srWrite(0x00);
         OCR1A = 0;
         OCR3C = 0;
+        delay(1500);   // pause between phases
 
-        // Pause 1 second between each test
-        delay(1000);
+        // --- Phase B: only Timer3 PWM (OCR3C) ---
+        // If a wheel spins here, that motor is enabled by D3/OC3C
+        OCR1A = 0;
+        OCR3C = 150;
+        srWrite(testBits[i]);
+        delay(3000);   // watch which wheel spins
+        srWrite(0x00);
+        OCR1A = 0;
+        OCR3C = 0;
+        delay(2000);   // longer pause between bits so you know a new round started
     }
 }
 
