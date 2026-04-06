@@ -2,29 +2,29 @@
  * robotlib.ino
  * CG2111A — Alex Robot
  *
- * CHANGES FROM PREVIOUS VERSION:
+ * Bare-metal DC motor driver derived directly from the original AFMotor code.
  *
- * 1. PWM frequency lowered — prescaler changed from 8 to 64
- *    Old: 16MHz / 8  / 256 = 7812 Hz -> too high for L293D, causes ringing
- *    New: 16MHz / 64 / 256 =  976 Hz -> within L293D spec, no ringing
+ * Physical motor mapping (from original AFMotor code):
+ *   M1 shield terminal = FRONT RIGHT
+ *   M2 shield terminal = BACK RIGHT
+ *   M3 shield terminal = BACK LEFT
+ *   M4 shield terminal = FRONT LEFT
  *
- * 2. Both L293D chips now driven from OCR1A (Timer1/D11) only
- *    OCR3C (Timer3/D3) is not connected to either L293D enable pin
- *    on this shield version — setting it had no effect.
- *    OCR3C is still set alongside OCR1A in case shield is rewired.
+ * AFMotor 74HC595 bit assignments:
+ *   M1: IN1=0x04, IN2=0x08  FORWARD=0x08, BACKWARD=0x04
+ *   M2: IN1=0x02, IN2=0x01  FORWARD=0x01, BACKWARD=0x02
+ *   M3: IN1=0x40, IN2=0x80  FORWARD=0x40, BACKWARD=0x80
+ *   M4: IN1=0x20, IN2=0x10  FORWARD=0x10, BACKWARD=0x20
  *
- * 3. Bit assignments updated to match physical wiring:
- *    Bits 0x01-0x08 control LEFT side motors (Front Left, Back Left)
- *    Bits 0x10-0x80 control RIGHT side motors (Front Right, Back Right)
+ * IMPORTANT — back motors are mounted in reverse on the chassis:
+ *   Robot FORWARD = FL(M4) FWD + FR(M1) FWD + BL(M3) BWD + BR(M2) BWD
  *
- * NOTE ON BACK-LEFT MOTOR:
- *    If back-left never responds, check its wires are firmly seated
- *    in the M2 terminal block. If wires are secure, swap M1/M2 defines.
+ * Shift register byte values per direction:
+ *   GO   = 0x10|0x08|0x80|0x02 = 0x9A
+ *   BACK = 0x20|0x04|0x40|0x01 = 0x65
+ *   CW   = 0x20|0x08|0x40|0x02 = 0x6A
+ *   CCW  = 0x10|0x04|0x80|0x01 = 0x95
  */
-
-// =============================================================
-// Direction constants (must match values in alex_control.ino)
-// =============================================================
 
 #define STOP_DIR 0
 #define GO       1
@@ -32,116 +32,84 @@
 #define CCW      3
 #define CW       4
 
-// =============================================================
-// Shift register bit positions
-// Based on observed behaviour:
-//   w/s (all-IN1/IN2): RIGHT wheels spin  -> right motors on 0x10/0x20/0x40/0x80
-//   d/a (mixed):       FRONT wheels spin  -> front motors respond to mixed pattern
-//
-// M1 = FRONT LEFT
-// M2 = BACK LEFT
-// M3 = BACK RIGHT
-// M4 = FRONT RIGHT
-// =============================================================
+// FRONT LEFT  = M4 shield terminal
+#define FL_FWD (1 << 4)   // 0x10
+#define FL_BWD (1 << 5)   // 0x20
 
-// M1 = FRONT LEFT
-#define M1_IN1 (1 << 2)   // 0x04
-#define M1_IN2 (1 << 3)   // 0x08
+// FRONT RIGHT = M1 shield terminal
+#define FR_FWD (1 << 3)   // 0x08
+#define FR_BWD (1 << 2)   // 0x04
 
-// M2 = BACK LEFT
-#define M2_IN1 (1 << 0)   // 0x01
-#define M2_IN2 (1 << 1)   // 0x02
+// BACK LEFT   = M3 shield terminal (mounted in reverse)
+#define BL_FWD (1 << 6)   // 0x40
+#define BL_BWD (1 << 7)   // 0x80
 
-// M3 = BACK RIGHT
-#define M3_IN1 (1 << 6)   // 0x40
-#define M3_IN2 (1 << 7)   // 0x80
-
-// M4 = FRONT RIGHT
-#define M4_IN1 (1 << 4)   // 0x10
-#define M4_IN2 (1 << 5)   // 0x20
-
-// =============================================================
-// Low-level shift register write
-// =============================================================
+// BACK RIGHT  = M2 shield terminal (mounted in reverse)
+#define BR_FWD (1 << 0)   // 0x01
+#define BR_BWD (1 << 1)   // 0x02
 
 static void srWrite(uint8_t data) {
-    PORTB &= ~(1 << PB6);   // LATCH (D12) LOW
+    PORTB &= ~(1 << PB6);
 
     for (int8_t i = 7; i >= 0; i--) {
-        PORTG &= ~(1 << PG5);  // CLK (D4) LOW
+        PORTG &= ~(1 << PG5);
 
         if (data & (1 << i))
-            PORTH |=  (1 << PH5);  // DATA (D8) HIGH
+            PORTH |=  (1 << PH5);
         else
-            PORTH &= ~(1 << PH5);  // DATA (D8) LOW
+            PORTH &= ~(1 << PH5);
 
-        PORTG |= (1 << PG5);   // CLK HIGH
+        PORTG |= (1 << PG5);
     }
 
-    PORTB |= (1 << PB6);   // LATCH HIGH
+    PORTB |= (1 << PB6);
 }
 
-// =============================================================
-// motorsInit — call once from setup()
-// =============================================================
-
 void motorsInit(void) {
-    DDRG  |= (1 << PG5);   // D4  CLK
-    DDRH  |= (1 << PH4);   // D7  OE
-    DDRH  |= (1 << PH5);   // D8  DATA
-    DDRB  |= (1 << PB6);   // D12 LATCH
+    DDRG |= (1 << PG5);
+    DDRH |= (1 << PH4);
+    DDRH |= (1 << PH5);
+    DDRB |= (1 << PB6);
 
-    // OE active LOW — enable shift register outputs
-    PORTH &= ~(1 << PH4);
+    PORTH &= ~(1 << PH4);  // OE active LOW — enable outputs
 
-    DDRB  |= (1 << PB5);   // D11 OC1A — main PWM for all motors
-    DDRE  |= (1 << PE5);   // D3  OC3C — secondary (may not be connected)
+    DDRB |= (1 << PB5);    // D11 OC1A
+    DDRE |= (1 << PE5);    // D3  OC3C
 
-    // Timer 1: Fast PWM 8-bit, non-inverting on OC1A (D11)
-    // Prescaler 64 -> frequency = 16MHz / 64 / 256 = 976 Hz
+    // Timer 1: Fast PWM 8-bit, prescaler 64 -> 976 Hz
     TCCR1A = (1 << COM1A1) | (1 << WGM10);
-    TCCR1B = (1 << WGM12)  | (1 << CS11) | (1 << CS10);  // prescaler 64
+    TCCR1B = (1 << WGM12)  | (1 << CS11) | (1 << CS10);
     OCR1A  = 0;
 
-    // Timer 3: Fast PWM 8-bit, non-inverting on OC3C (D3)
-    // Prescaler 64 for consistency — set even if not connected
+    // Timer 3: Fast PWM 8-bit, prescaler 64
     TCCR3A = (1 << COM3C1) | (1 << WGM30);
-    TCCR3B = (1 << WGM32)  | (1 << CS31) | (1 << CS30);  // prescaler 64
+    TCCR3B = (1 << WGM32)  | (1 << CS31) | (1 << CS30);
     OCR3C  = 0;
 
     srWrite(0x00);
 }
-
-// =============================================================
-// move — set direction and speed for all four motors
-// =============================================================
 
 void move(int speed, int direction) {
     uint8_t sr  = 0x00;
     uint8_t pwm = (uint8_t)speed;
 
     switch (direction) {
-
         case GO:
-            // All wheels forward
-            sr = M1_IN1 | M2_IN1 | M3_IN1 | M4_IN1;
+            // FL FWD + FR FWD + BL BWD + BR BWD = 0x9A
+            sr = FL_FWD | FR_FWD | BL_BWD | BR_BWD;
             break;
-
         case BACK:
-            // All wheels backward
-            sr = M1_IN2 | M2_IN2 | M3_IN2 | M4_IN2;
+            // FL BWD + FR BWD + BL FWD + BR FWD = 0x65
+            sr = FL_BWD | FR_BWD | BL_FWD | BR_FWD;
             break;
-
         case CW:
-            // Clockwise (right turn): left wheels forward, right wheels backward
-            sr = M1_IN1 | M2_IN1 | M3_IN2 | M4_IN2;
+            // Right turn: left wheels fwd, right wheels bwd = 0x6A
+            sr = FL_BWD | FR_FWD | BL_FWD | BR_BWD;
             break;
-
         case CCW:
-            // Counter-clockwise (left turn): right wheels forward, left wheels backward
-            sr = M3_IN1 | M4_IN1 | M1_IN2 | M2_IN2;
+            // Left turn: right wheels fwd, left wheels bwd = 0x95
+            sr = FL_FWD | FR_BWD | BL_BWD | BR_FWD;
             break;
-
         case STOP_DIR:
         default:
             sr  = 0x00;
@@ -150,13 +118,9 @@ void move(int speed, int direction) {
     }
 
     srWrite(sr);
-    OCR1A = pwm;   // main PWM — drives all motors on this shield
-    OCR3C = pwm;   // secondary PWM — set for completeness
+    OCR1A = pwm;
+    OCR3C = pwm;
 }
-
-// =============================================================
-// Convenience wrappers
-// =============================================================
 
 void forward(int speed)  { move(speed, GO);      }
 void backward(int speed) { move(speed, BACK);     }
