@@ -89,6 +89,26 @@ void motorsInit(void) {
     srWrite(0x00);
 }
 
+void testMotors(void) {
+    uint8_t testBits[] = {
+        0x01, 0x02, 0x04, 0x08,
+        0x10, 0x20, 0x40, 0x80
+    };
+
+    delay(3000);  // 3 seconds to put robot down
+
+    for (int i = 0; i < 8; i++) {
+        OCR1A = 150;
+        OCR3C = 150;
+        srWrite(testBits[i]);
+        delay(2000);       // spin 2 seconds — note which motor and direction
+        srWrite(0x00);
+        OCR1A = 0;
+        OCR3C = 0;
+        delay(1000);       // 1 second pause between bits
+    }
+}
+
 void move(int speed, int direction) {
     uint8_t sr  = 0x00;
     uint8_t pwm = (uint8_t)speed;
