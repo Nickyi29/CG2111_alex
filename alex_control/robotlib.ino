@@ -33,20 +33,20 @@
 #define CW       4
 
 // FRONT LEFT  = M4 shield terminal
-#define FL_FWD (1 << 0)   // 0x01
-#define FL_BWD (1 << 6)   // 0x40
+#define FL_FWD (1 << 0)   // 0x01  ← unchanged
+#define FL_BWD (1 << 6)   // 0x40  ← unchanged
 
 // FRONT RIGHT = M1 shield terminal
-#define FR_FWD (1 << 2)   // 0x04
-#define FR_BWD (1 << 3)   // 0x08
+#define FR_FWD (1 << 2)   // 0x04  ← unchanged
+#define FR_BWD (1 << 3)   // 0x08  ← unchanged
 
 // BACK LEFT   = M3 shield terminal (mounted in reverse)
-#define BL_FWD (1 << 7)   // 0x80
-#define BL_BWD (1 << 5)   // 0x20
+#define BL_FWD (1 << 5)   // 0x20  ← was (1<<7) SWAPPED
+#define BL_BWD (1 << 7)   // 0x80  ← was (1<<5) SWAPPED
 
 // BACK RIGHT  = M2 shield terminal (mounted in reverse)
-#define BR_FWD (1 << 4)   // 0x10
-#define BR_BWD (1 << 1)   // 0x02
+#define BR_FWD (1 << 1)   // 0x02  ← was (1<<4) SWAPPED
+#define BR_BWD (1 << 4)   // 0x10  ← was (1<<1) SWAPPED
 
 static void srWrite(uint8_t data) {
     PORTB &= ~(1 << PB6);
