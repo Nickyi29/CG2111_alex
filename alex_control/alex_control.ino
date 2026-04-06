@@ -3,18 +3,11 @@
  * CG2111A — Alex Robot
  *
  * CHANGE FROM PREVIOUS VERSION:
- *   Servo ISR changed from blocking busy-wait to non-blocking state machine.
- *   Previously TIMER4_COMPA_vect blocked all interrupts for up to 2ms every
- *   20ms while busy-waiting to pull servo pins LOW. This caused ~45% of
- *   incoming serial frames to be corrupted (bytes lost during UART receive),
- *   resulting in dropped commands and unreliable arm/motor control.
- *
- *   New approach:
- *   - ISR only sets all servo pins HIGH and records TCNT4 start tick
- *   - loop() calls servoUpdate() every iteration to pull pins LOW
- *     when their tick count is reached
- *   - ISR now takes ~2µs instead of 2ms
- *   - Serial RX is never blocked by servo PWM
+ *   Fixed race condition in servoUpdate() wrap detection.
+ *   servoStartTick captured TCNT4 before CTC reset, causing
+ *   elapsed < servoStartTick to trigger immediately and force
+ *   all servo pins LOW — giving servos a 0-duration pulse.
+ *   Fixed by replacing wrap detection with a simple 2.5ms timeout.
  */
 
 #include <avr/io.h>
@@ -46,12 +39,9 @@ int                   msPerDeg        = 10;
 unsigned long         lastMoveTime[4] = {0, 0, 0, 0};
 volatile unsigned int servoTicks[4];
 
-// State machine for non-blocking servo pulse generation
-// servoActive: true while we are in the pulse window (pins still need pulling LOW)
-// servoStartTick: value of TCNT4 when ISR fired and pins went HIGH
-volatile bool         servoActive    = false;
-volatile unsigned int servoStartTick = 0;
-volatile bool         servoPinDone[4] = {false, false, false, false};
+// Non-blocking servo state machine
+volatile bool servoActive     = false;
+volatile bool servoPinDone[4] = {false, false, false, false};
 
 // =============================================================
 // Direction constants — must match robotlib.ino
@@ -135,22 +125,17 @@ void updateTicks(void) {
     for (int i = 0; i < 4; i++) {
         newTicks[i] = 2000 + (unsigned int)((long)curPos[i] * 2000 / 180);
     }
-    // Atomic write — prevent ISR reading partially updated values
     cli();
     for (int i = 0; i < 4; i++) servoTicks[i] = newTicks[i];
     sei();
 }
 
-// ISR fires every 20ms — now only takes ~2µs instead of 2ms
-// Just sets pins HIGH and marks the start of the pulse window
+// ISR fires every 20ms — takes ~2µs, does not block serial RX
 ISR(TIMER4_COMPA_vect) {
-    // All servo pins HIGH — start of pulse
+    // All servo pins HIGH — start of pulse window
     PORTA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
 
-    // Record timer value at start of pulse
-    servoStartTick = TCNT4;
-
-    // Reset state machine
+    // Reset state machine flags
     servoPinDone[0] = false;
     servoPinDone[1] = false;
     servoPinDone[2] = false;
@@ -158,315 +143,31 @@ ISR(TIMER4_COMPA_vect) {
     servoActive     = true;
 
     // ISR exits immediately — loop() handles pulling pins LOW
+    // Note: servoStartTick removed — was causing race condition
+    // because TCNT4 resets to 0 in CTC mode immediately after match
 }
 
-// Called every loop() iteration to complete the servo pulse
-// Pulls each pin LOW when its tick count is reached
-// Returns immediately if not in pulse window
+// Called every loop() iteration to complete the servo pulse.
+// Uses TCNT4 directly — in CTC mode TCNT4 counts 0 to 40000 (20ms).
+// servoTicks values are 2000-4000 (1ms-2ms), well within the 20ms window.
+// Simple timeout at 5000 ticks (2.5ms) cleans up if loop() is slow.
 void servoUpdate(void) {
     if (!servoActive) return;
 
     unsigned int elapsed = TCNT4;
 
-    // Handle timer wrap-around — if TCNT4 reset (new ISR fired), stop
-    // This protects against servoUpdate() running into the next pulse cycle
-    if (elapsed < servoStartTick) {
-        // Timer wrapped — new ISR must have fired, force all pins LOW
+    // Safety timeout — 5000 ticks = 2.5ms
+    // Longest valid servo pulse is 2ms (4000 ticks)
+    // If we are past 2.5ms, force all pins LOW and finish
+    if (elapsed > 5000) {
         PORTA &= ~(BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
         servoActive = false;
         return;
     }
 
+    // Pull each pin LOW when its tick count is reached
     if (!servoPinDone[0] && elapsed >= servoTicks[0]) {
         PORTA &= ~BASE_PIN;
         servoPinDone[0] = true;
     }
-    if (!servoPinDone[1] && elapsed >= servoTicks[1]) {
-        PORTA &= ~SHOULDER_PIN;
-        servoPinDone[1] = true;
-    }
-    if (!servoPinDone[2] && elapsed >= servoTicks[2]) {
-        PORTA &= ~ELBOW_PIN;
-        servoPinDone[2] = true;
-    }
-    if (!servoPinDone[3] && elapsed >= servoTicks[3]) {
-        PORTA &= ~GRIPPER_PIN;
-        servoPinDone[3] = true;
-    }
-
-    // All pins pulled LOW — pulse complete
-    if (servoPinDone[0] && servoPinDone[1] &&
-        servoPinDone[2] && servoPinDone[3]) {
-        servoActive = false;
-    }
-}
-
-// =============================================================
-// Arm movement — non-blocking
-// =============================================================
-
-void processMovement(void) {
-    unsigned long now = millis();
-    for (int i = 0; i < 4; i++) {
-        if (curPos[i] != targetPos[i] &&
-            (unsigned long)(now - lastMoveTime[i]) >= (unsigned long)msPerDeg) {
-            if (targetPos[i] > curPos[i]) curPos[i]++;
-            else                          curPos[i]--;
-            lastMoveTime[i] = now;
-            updateTicks();
-        }
-    }
-}
-
-// =============================================================
-// Packet helpers
-// =============================================================
-
-static void sendResponse(TResponseType resp, uint32_t param) {
-    TPacket pkt;
-    memset(&pkt, 0, sizeof(pkt));
-    pkt.packetType = PACKET_TYPE_RESPONSE;
-    pkt.command    = resp;
-    pkt.params[0]  = param;
-    sendFrame(&pkt);
-}
-
-static void sendStatus(TState state) {
-    sendResponse(RESP_STATUS, (uint32_t)state);
-}
-
-// =============================================================
-// TCS3200 helpers
-// =============================================================
-
-static inline void setTcsFilter(bool s2High, bool s3High) {
-    if (s2High) TCS_CTRL_PORT |=  (1 << TCS_S2_BIT);
-    else        TCS_CTRL_PORT &= ~(1 << TCS_S2_BIT);
-    if (s3High) TCS_CTRL_PORT |=  (1 << TCS_S3_BIT);
-    else        TCS_CTRL_PORT &= ~(1 << TCS_S3_BIT);
-}
-
-static inline uint8_t readTcsOut(void) {
-    return (TCS_OUT_PINR & (1 << TCS_OUT_BIT)) ? 1 : 0;
-}
-
-static uint32_t measureChannelHz(bool s2High, bool s3High) {
-    setTcsFilter(s2High, s3High);
-    delayMicroseconds(300);
-
-    uint32_t      risingEdges = 0;
-    uint8_t       prev        = readTcsOut();
-    unsigned long startMs     = millis();
-
-    while ((unsigned long)(millis() - startMs) < 100) {
-        uint8_t cur = readTcsOut();
-        if (!prev && cur) risingEdges++;
-        prev = cur;
-    }
-    return risingEdges * 10UL;
-}
-
-static void readColorChannels(uint32_t *r, uint32_t *g, uint32_t *b) {
-    *r = measureChannelHz(false, false);  // S2=L S3=L → red
-    *g = measureChannelHz(true,  true);   // S2=H S3=H → green
-    *b = measureChannelHz(false, true);   // S2=L S3=H → blue
-}
-
-// =============================================================
-// Command handler
-// =============================================================
-
-static void handleCommand(const TPacket *cmd) {
-    if (cmd->packetType != PACKET_TYPE_COMMAND) return;
-
-    switch (cmd->command) {
-
-        case COMMAND_ESTOP: {
-            cli();
-            buttonState  = STATE_STOPPED;
-            stateChanged = false;
-            sei();
-            currentDir = DIR_STOP;
-            stop();
-            TPacket pkt;
-            memset(&pkt, 0, sizeof(pkt));
-            pkt.packetType = PACKET_TYPE_RESPONSE;
-            pkt.command    = RESP_OK;
-            strncpy(pkt.data, "E-Stop activated", sizeof(pkt.data) - 1);
-            pkt.data[sizeof(pkt.data) - 1] = '\0';
-            sendFrame(&pkt);
-            sendStatus(STATE_STOPPED);
-            break;
-        }
-
-        case COMMAND_COLOR: {
-            uint32_t r, g, b;
-            readColorChannels(&r, &g, &b);
-            TPacket pkt;
-            memset(&pkt, 0, sizeof(pkt));
-            pkt.packetType = PACKET_TYPE_RESPONSE;
-            pkt.command    = RESP_COLOR;
-            pkt.params[0]  = r;
-            pkt.params[1]  = g;
-            pkt.params[2]  = b;
-            strncpy(pkt.data, "Color sample ready", sizeof(pkt.data) - 1);
-            pkt.data[sizeof(pkt.data) - 1] = '\0';
-            sendFrame(&pkt);
-            break;
-        }
-
-        case COMMAND_FORWARD:
-            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
-            currentDir = DIR_GO;
-            forward(motorSpeed);
-            break;
-
-        case COMMAND_BACKWARD:
-            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
-            currentDir = DIR_BACK;
-            backward(motorSpeed);
-            break;
-
-        case COMMAND_LEFT:
-            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
-            currentDir = DIR_CCW;
-            ccw(motorSpeed);
-            break;
-
-        case COMMAND_RIGHT:
-            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
-            currentDir = DIR_CW;
-            cw(motorSpeed);
-            break;
-
-        case COMMAND_SPEED: {
-            int delta    = (cmd->params[0] == 1) ? SPEED_STEP : -SPEED_STEP;
-            int newSpeed = (int)motorSpeed + delta;
-            if (newSpeed < SPEED_MIN) newSpeed = SPEED_MIN;
-            if (newSpeed > SPEED_MAX) newSpeed = SPEED_MAX;
-            motorSpeed = (uint8_t)newSpeed;
-            if (buttonState != STATE_STOPPED && currentDir != DIR_STOP)
-                move(motorSpeed, currentDir);
-            sendResponse(RESP_OK, motorSpeed);
-            break;
-        }
-
-        case COMMAND_STOP:
-            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
-            currentDir = DIR_STOP;
-            stop();
-            break;
-
-        case COMMAND_ARM_BASE:
-            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
-            targetPos[0] = constrain((int)cmd->params[0], BASE_MIN, BASE_MAX);
-            break;
-
-        case COMMAND_ARM_SHOULDER:
-            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
-            targetPos[1] = constrain((int)cmd->params[0], SHOULDER_MIN, SHOULDER_MAX);
-            break;
-
-        case COMMAND_ARM_ELBOW:
-            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
-            targetPos[2] = constrain((int)cmd->params[0], ELBOW_MIN, ELBOW_MAX);
-            break;
-
-        case COMMAND_ARM_GRIPPER:
-            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
-            targetPos[3] = constrain((int)cmd->params[0], GRIPPER_MIN, GRIPPER_MAX);
-            break;
-
-        case COMMAND_ARM_HOME:
-            if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
-            for (int i = 0; i < 4; i++) targetPos[i] = 90;
-            break;
-
-        case COMMAND_ARM_SPEED:
-            msPerDeg = (int)cmd->params[0];
-            break;
-
-        default:
-            break;
-    }
-}
-
-// =============================================================
-// setup()
-// =============================================================
-
-void setup(void) {
-#if USE_BAREMETAL_SERIAL
-    usartInit(8);
-#else
-    Serial.begin(115200);
-#endif
-
-    // Port A — servo signal outputs (PA0-PA3 = D22-D25)
-    DDRA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
-
-    // Port L — TCS3200 (D42-D46 = PL7-PL3)
-    DDRL |=  (1 << TCS_S0_BIT) | (1 << TCS_S1_BIT)
-           | (1 << TCS_S2_BIT) | (1 << TCS_S3_BIT);
-    DDRL &= ~(1 << TCS_OUT_BIT);
-    PORTL &= ~(1 << TCS_OUT_BIT);
-
-    // 20% output frequency scaling: S0=HIGH, S1=LOW
-    PORTL |=  (1 << TCS_S0_BIT);
-    PORTL &= ~(1 << TCS_S1_BIT);
-
-    // E-Stop — D21 = PD0 = INT0, input with pull-up, any-change ISR
-    ESTOP_DDR  &= ~(1 << ESTOP_BIT);
-    ESTOP_PORT |=  (1 << ESTOP_BIT);
-    EICRA &= ~((1 << ISC01) | (1 << ISC00));
-    EICRA |=  (1 << ISC00);
-    EIMSK |=  (1 << INT0);
-
-    // Timer 4: 16-bit CTC, 20ms period for servo PWM
-    cli();
-    TCCR4A = 0;
-    TCCR4B = 0;
-    TCNT4  = 0;
-    OCR4A  = 40000;
-    TCCR4B |= (1 << WGM42);
-    TCCR4B |= (1 << CS41);
-    TIMSK4 |= (1 << OCIE4A);
-    sei();
-
-    updateTicks();
-
-    // Bare-metal motor driver
-    motorsInit();
-}
-
-// =============================================================
-// loop()
-// =============================================================
-
-void loop(void) {
-    // Complete servo pulse — pull pins LOW when tick counts reached
-    // This replaces the busy-wait that was inside the ISR
-    servoUpdate();
-
-    // Step arm joints towards target positions
-    processMovement();
-
-    // Handle E-Stop state changes
-    if (stateChanged) {
-        cli();
-        TState state = buttonState;
-        stateChanged = false;
-        sei();
-        if (state == STATE_STOPPED) {
-            currentDir = DIR_STOP;
-            stop();
-        }
-        sendStatus(state);
-    }
-
-    // Receive and handle one TPacket per loop iteration
-    TPacket incoming;
-    if (receiveFrame(&incoming)) {
-        handleCommand(&incoming);
-    }
-}
+    if (!servoPi
