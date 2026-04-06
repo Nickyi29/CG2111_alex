@@ -2,8 +2,25 @@
  * alex_control.ino
  * CG2111A — Alex Robot
  *
- * TEMPORARY: testMotors() called in setup() for bit layout calibration.
- * Remove the testMotors() call after calibration is done.
+ * Pin summary:
+ *   D21 PD0 INT0   E-Stop button
+ *   D22 PA0        Base servo signal
+ *   D23 PA1        Shoulder servo signal
+ *   D24 PA2        Elbow servo signal
+ *   D25 PA3        Gripper servo signal
+ *   D42 PL7        TCS3200 S0 (output)
+ *   D43 PL6        TCS3200 S1 (output)
+ *   D44 PL5        TCS3200 S2 (output)
+ *   D45 PL4        TCS3200 S3 (output)
+ *   D46 PL3        TCS3200 OUT (input, polled)
+ *   D18 PD3 INT3   Left encoder (optional)
+ *   D19 PD2 INT2   Right encoder (optional)
+ *   D3  PE5 OC3C   Motor PWM secondary — shield internal
+ *   D11 PB5 OC1A   Motor PWM primary   — shield internal
+ *   D4  PG5        Shift reg CLK       — shield internal
+ *   D7  PH4        Shift reg OE        — shield internal
+ *   D8  PH5        Shift reg DATA      — shield internal
+ *   D12 PB6        Shift reg LATCH     — shield internal
  */
 
 #include <avr/io.h>
@@ -23,6 +40,7 @@ const int SHOULDER_MIN = 40,  SHOULDER_MAX = 140;
 const int ELBOW_MIN    = 20,  ELBOW_MAX    = 160;
 const int GRIPPER_MIN  = 10,  GRIPPER_MAX  = 90;
 
+// Servo signal pins — D22-D25 = PA0-PA3
 #define BASE_PIN     (1 << PA0)
 #define SHOULDER_PIN (1 << PA1)
 #define ELBOW_PIN    (1 << PA2)
@@ -34,16 +52,28 @@ int                   msPerDeg        = 10;
 unsigned long         lastMoveTime[4] = {0, 0, 0, 0};
 volatile unsigned int servoTicks[4];
 
+// =============================================================
+// Direction constants — must match robotlib.ino
+// =============================================================
+
 #define DIR_STOP 0
 #define DIR_GO   1
 #define DIR_BACK 2
 #define DIR_CCW  3
 #define DIR_CW   4
 
+// =============================================================
+// Speed limits
+// =============================================================
+
 #define SPEED_MIN     30
 #define SPEED_MAX     255
 #define SPEED_DEFAULT 150
 #define SPEED_STEP    50
+
+// =============================================================
+// Pin definitions
+// =============================================================
 
 // ---- E-Stop: D21 = PD0 = INT0 ----
 #define ESTOP_DDR  DDRD
@@ -51,7 +81,7 @@ volatile unsigned int servoTicks[4];
 #define ESTOP_PINR PIND
 #define ESTOP_BIT  PD0
 
-// ---- TCS3200 control: D42-D45 = PL7-PL4 ----
+// ---- TCS3200 control: D42-D45 = PL7-PL4 (outputs) ----
 #define TCS_CTRL_DDR  DDRL
 #define TCS_CTRL_PORT PORTL
 #define TCS_S0_BIT    PL7
@@ -59,17 +89,25 @@ volatile unsigned int servoTicks[4];
 #define TCS_S2_BIT    PL5
 #define TCS_S3_BIT    PL4
 
-// ---- TCS3200 OUT: D46 = PL3 ----
+// ---- TCS3200 OUT: D46 = PL3 (input, polled) ----
 #define TCS_OUT_DDR  DDRL
 #define TCS_OUT_PORT PORTL
 #define TCS_OUT_PINR PINL
 #define TCS_OUT_BIT  PL3
+
+// =============================================================
+// State
+// =============================================================
 
 volatile TState        buttonState     = STATE_RUNNING;
 volatile bool          stateChanged    = false;
 volatile unsigned long lastButtonIsrMs = 0;
 volatile uint8_t       motorSpeed      = SPEED_DEFAULT;
 volatile uint8_t       currentDir      = DIR_STOP;
+
+// =============================================================
+// E-Stop ISR — INT0 on PD0 (D21)
+// =============================================================
 
 ISR(INT0_vect) {
     unsigned long now = millis();
@@ -87,11 +125,16 @@ ISR(INT0_vect) {
     }
 }
 
+// =============================================================
+// Servo PWM — Timer 4 CTC, bit-bang on Port A (D22-D25)
+// =============================================================
+
 void updateTicks(void) {
     unsigned int newTicks[4];
     for (int i = 0; i < 4; i++) {
         newTicks[i] = 2000 + (unsigned int)((long)curPos[i] * 2000 / 180);
     }
+    // Atomic write — prevent ISR reading partially updated values
     cli();
     for (int i = 0; i < 4; i++) servoTicks[i] = newTicks[i];
     sei();
@@ -110,6 +153,10 @@ ISR(TIMER4_COMPA_vect) {
     }
 }
 
+// =============================================================
+// Arm movement — non-blocking
+// =============================================================
+
 void processMovement(void) {
     unsigned long now = millis();
     for (int i = 0; i < 4; i++) {
@@ -123,6 +170,10 @@ void processMovement(void) {
     }
 }
 
+// =============================================================
+// Packet helpers
+// =============================================================
+
 static void sendResponse(TResponseType resp, uint32_t param) {
     TPacket pkt;
     memset(&pkt, 0, sizeof(pkt));
@@ -135,6 +186,10 @@ static void sendResponse(TResponseType resp, uint32_t param) {
 static void sendStatus(TState state) {
     sendResponse(RESP_STATUS, (uint32_t)state);
 }
+
+// =============================================================
+// TCS3200 helpers
+// =============================================================
 
 static inline void setTcsFilter(bool s2High, bool s3High) {
     if (s2High) TCS_CTRL_PORT |=  (1 << TCS_S2_BIT);
@@ -164,10 +219,14 @@ static uint32_t measureChannelHz(bool s2High, bool s3High) {
 }
 
 static void readColorChannels(uint32_t *r, uint32_t *g, uint32_t *b) {
-    *r = measureChannelHz(false, false);
-    *g = measureChannelHz(true,  true);
-    *b = measureChannelHz(false, true);
+    *r = measureChannelHz(false, false);  // S2=L S3=L → red
+    *g = measureChannelHz(true,  true);   // S2=H S3=H → green
+    *b = measureChannelHz(false, true);   // S2=L S3=H → blue
 }
+
+// =============================================================
+// Command handler
+// =============================================================
 
 static void handleCommand(const TPacket *cmd) {
     if (cmd->packetType != PACKET_TYPE_COMMAND) return;
@@ -284,6 +343,10 @@ static void handleCommand(const TPacket *cmd) {
     }
 }
 
+// =============================================================
+// setup()
+// =============================================================
+
 void setup(void) {
 #if USE_BAREMETAL_SERIAL
     usartInit(8);
@@ -291,21 +354,27 @@ void setup(void) {
     Serial.begin(115200);
 #endif
 
+    // Port A — servo signal outputs (PA0-PA3 = D22-D25)
     DDRA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
 
+    // Port L — TCS3200 (D42-D46 = PL7-PL3)
     DDRL |=  (1 << TCS_S0_BIT) | (1 << TCS_S1_BIT)
            | (1 << TCS_S2_BIT) | (1 << TCS_S3_BIT);
     DDRL &= ~(1 << TCS_OUT_BIT);
     PORTL &= ~(1 << TCS_OUT_BIT);
+
+    // 20% output frequency scaling: S0=HIGH, S1=LOW
     PORTL |=  (1 << TCS_S0_BIT);
     PORTL &= ~(1 << TCS_S1_BIT);
 
+    // E-Stop — D21 = PD0 = INT0, input with pull-up, any-change ISR
     ESTOP_DDR  &= ~(1 << ESTOP_BIT);
     ESTOP_PORT |=  (1 << ESTOP_BIT);
     EICRA &= ~((1 << ISC01) | (1 << ISC00));
     EICRA |=  (1 << ISC00);
     EIMSK |=  (1 << INT0);
 
+    // Timer 4: 16-bit CTC, 20ms period for servo PWM
     cli();
     TCCR4A = 0;
     TCCR4B = 0;
@@ -317,15 +386,14 @@ void setup(void) {
     sei();
 
     updateTicks();
-    motorsInit();
 
-    // -------------------------------------------------------
-    // TEMPORARY: run motor bit test on startup
-    // Upload, observe which wheel spins for each bit, record
-    // results, then remove this line and re-upload
-    // -------------------------------------------------------
-    testMotors();
+    // Bare-metal motor driver
+    motorsInit();
 }
+
+// =============================================================
+// loop()
+// =============================================================
 
 void loop(void) {
     processMovement();
