@@ -32,19 +32,19 @@
 #define CCW      3
 #define CW       4
 
-// FRONT LEFT  = M4 shield terminal
+// FRONT LEFT  = M4 shield terminal  ← UNCHANGED
 #define FL_FWD (1 << 4)   // 0x10
 #define FL_BWD (1 << 5)   // 0x20
 
-// FRONT RIGHT = M1 shield terminal
-#define FR_FWD (1 << 3)   // 0x08
-#define FR_BWD (1 << 2)   // 0x04
+// FRONT RIGHT = M1 shield terminal  ← FWD/BWD SWAPPED
+#define FR_FWD (1 << 2)   // 0x04  (was 1<<3)
+#define FR_BWD (1 << 3)   // 0x08  (was 1<<2)
 
-// BACK LEFT   = M3 shield terminal (mounted in reverse)
-#define BL_FWD (1 << 6)   // 0x40
-#define BL_BWD (1 << 7)   // 0x80
+// BACK LEFT   = M3 shield terminal  ← FWD/BWD SWAPPED
+#define BL_FWD (1 << 7)   // 0x80  (was 1<<6)
+#define BL_BWD (1 << 6)   // 0x40  (was 1<<7)
 
-// BACK RIGHT  = M2 shield terminal (mounted in reverse)
+// BACK RIGHT  = M2 shield terminal  ← UNCHANGED
 #define BR_FWD (1 << 0)   // 0x01
 #define BR_BWD (1 << 1)   // 0x02
 
