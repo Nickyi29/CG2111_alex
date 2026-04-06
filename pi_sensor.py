@@ -3,6 +3,9 @@
 pi_sensor.py
 CG2111A — Alex Robot
 Operator 1: robot movement, sensors, relay host.
+
+CHANGES:
+  - Removed openCamera() from __main__ — camera opens lazily on first 'p' press.
 """
 
 import struct
@@ -20,15 +23,10 @@ from alex_camera import (
 from lidar_example_cli_plot import plot_single_scan
 from second_terminal import relay
 
-# ----------------------------------------------------------------
-# SERIAL PORT SETUP
-# ----------------------------------------------------------------
-
 PORT     = "/dev/ttyACM0"
 BAUDRATE = 115200
 
 _ser = None
-
 
 def openSerial():
     global _ser
@@ -37,16 +35,10 @@ def openSerial():
     time.sleep(2)
     print("Ready.\n")
 
-
 def closeSerial():
     global _ser
     if _ser and _ser.is_open:
         _ser.close()
-
-
-# ----------------------------------------------------------------
-# TPACKET CONSTANTS — must stay in sync with packets.h
-# ----------------------------------------------------------------
 
 PACKET_TYPE_COMMAND  = 0
 PACKET_TYPE_RESPONSE = 1
@@ -127,7 +119,6 @@ def receiveFrame():
             return None
         if b[0] != magic_hi:
             continue
-
         b = _ser.read(1)
         if not b:
             return None
@@ -144,7 +135,6 @@ def receiveFrame():
         cs_byte = _ser.read(1)
         if not cs_byte:
             return None
-
         if cs_byte[0] != computeChecksum(raw):
             continue
 
@@ -157,20 +147,11 @@ def sendCommand(commandType, data=b'', params=None):
     _ser.flush()
 
 
-# ----------------------------------------------------------------
-# E-STOP STATE
-# ----------------------------------------------------------------
-
 _estop_state = STATE_RUNNING
-
 
 def isEstopActive():
     return _estop_state == STATE_STOPPED
 
-
-# ----------------------------------------------------------------
-# PACKET DISPLAY
-# ----------------------------------------------------------------
 
 def printPacket(pkt):
     global _estop_state
@@ -182,9 +163,10 @@ def printPacket(pkt):
         if cmd == RESP_OK:
             debug_str = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
             val = pkt['params'][0]
-            # Arm ACK: data field contains joint name (e.g. "BASE", "SHOULDER")
             if debug_str in ('BASE', 'SHOULDER', 'ELBOW', 'GRIPPER', 'HOME'):
                 print(f"Arm accepted: {debug_str} -> {val} deg")
+            elif debug_str in ('E-Stop ON', 'E-Stop OFF'):
+                print(f"Arduino: {debug_str}")
             elif val > 0:
                 pct = round(val / 255 * 100)
                 print(f"Speed updated -> {val}/255 ({pct}%)")
@@ -203,10 +185,10 @@ def printPacket(pkt):
         else:
             print(f"Response: unknown command {cmd}")
 
-        # For arm ACKs, data is the joint name — already displayed above.
-        # For other responses (SPEED, etc.), print any debug string from Arduino.
         debug_str_raw = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
-        if debug_str_raw and debug_str_raw not in ('BASE', 'SHOULDER', 'ELBOW', 'GRIPPER', 'HOME'):
+        if debug_str_raw and debug_str_raw not in (
+                'BASE', 'SHOULDER', 'ELBOW', 'GRIPPER', 'HOME',
+                'E-Stop ON', 'E-Stop OFF'):
             print(f"Arduino debug: {debug_str_raw}")
 
     elif ptype == PACKET_TYPE_MESSAGE:
@@ -217,10 +199,6 @@ def printPacket(pkt):
         print(f"Packet: type={ptype}, cmd={cmd}")
 
 
-# ----------------------------------------------------------------
-# COLOR SENSOR
-# ----------------------------------------------------------------
-
 def handleColorCommand():
     if isEstopActive():
         print("Refused: E-Stop is active")
@@ -229,25 +207,18 @@ def handleColorCommand():
     sendCommand(COMMAND_COLOR)
 
 
-# ----------------------------------------------------------------
-# CAMERA
-# ----------------------------------------------------------------
-
 _camera           = None
 _frames_remaining = 5
-
 
 def openCamera():
     global _camera
     _camera = cameraOpen()
-
 
 def closeCamera():
     global _camera
     if _camera is not None:
         cameraClose(_camera)
         _camera = None
-
 
 def handleCameraCommand():
     global _frames_remaining
@@ -265,10 +236,6 @@ def handleCameraCommand():
     print(f"Frames remaining: {_frames_remaining}")
 
 
-# ----------------------------------------------------------------
-# LIDAR
-# ----------------------------------------------------------------
-
 def handleLidarCommand():
     if isEstopActive():
         print("Refused: E-Stop is active")
@@ -277,14 +244,10 @@ def handleLidarCommand():
     plot_single_scan()
 
 
-# ----------------------------------------------------------------
-# USER INPUT
-# ----------------------------------------------------------------
-
 def handleUserInput(line):
     if line == 'e':
-        print("Sending E-Stop command...")
-        sendCommand(COMMAND_ESTOP, data=b'This is a debug message')
+        print("Sending E-Stop toggle...")
+        sendCommand(COMMAND_ESTOP, data=b'toggle')
 
     elif line == 'c':
         handleColorCommand()
@@ -339,14 +302,10 @@ def handleUserInput(line):
         print(f"Unknown: '{line}'. Valid: w/a/s/d, e, c, p, l, +/-, x")
 
 
-# ----------------------------------------------------------------
-# MAIN LOOP
-# ----------------------------------------------------------------
-
 def runCommandInterface():
     print("Sensor interface ready.")
     print("Controls: w=forward s=backward a=left d=right  x=stop")
-    print(" e=estop  c=color  p=camera  l=lidar")
+    print(" e=estop(toggle)  c=color  p=camera  l=lidar")
     print(" +=speed up  -=speed down")
     print("Press Ctrl+C to exit.\n")
 
@@ -376,15 +335,13 @@ def runCommandInterface():
 
 if __name__ == '__main__':
     openSerial()
-    openCamera()
+    # openCamera() intentionally removed — opens lazily on first 'p'
     relay.start()
 
     try:
         runCommandInterface()
-
     except KeyboardInterrupt:
         print("\nExiting.")
-
     finally:
         relay.shutdown()
         closeCamera()
