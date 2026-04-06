@@ -2,12 +2,23 @@
  * alex_control.ino
  * CG2111A — Alex Robot
  *
- * CHANGE FROM PREVIOUS VERSION:
- *   Fixed race condition in servoUpdate() wrap detection.
- *   servoStartTick captured TCNT4 before CTC reset, causing
- *   elapsed < servoStartTick to trigger immediately and force
- *   all servo pins LOW — giving servos a 0-duration pulse.
- *   Fixed by replacing wrap detection with a simple 2.5ms timeout.
+ * Pin summary:
+ *   D21 PD0 INT0   E-Stop button (input, pull-up, any-change ISR)
+ *   D22 PA0        Base servo signal
+ *   D23 PA1        Shoulder servo signal
+ *   D24 PA2        Elbow servo signal
+ *   D25 PA3        Gripper servo signal
+ *   D42 PL7        TCS3200 S0 (output)
+ *   D43 PL6        TCS3200 S1 (output)
+ *   D44 PL5        TCS3200 S2 (output)
+ *   D45 PL4        TCS3200 S3 (output)
+ *   D46 PL3        TCS3200 OUT (input, polled)
+ *   D3  PE5 OC3C   Motor PWM secondary — shield internal
+ *   D11 PB5 OC1A   Motor PWM primary   — shield internal
+ *   D4  PG5        Shift reg CLK       — shield internal
+ *   D7  PH4        Shift reg OE        — shield internal
+ *   D8  PH5        Shift reg DATA      — shield internal
+ *   D12 PB6        Shift reg LATCH     — shield internal
  */
 
 #include <avr/io.h>
@@ -130,42 +141,29 @@ void updateTicks(void) {
     sei();
 }
 
-// ISR fires every 20ms — takes ~2µs, does not block serial RX
+// ISR fires every 20ms — takes ~2us, does not block serial RX
 ISR(TIMER4_COMPA_vect) {
-    // All servo pins HIGH — start of pulse window
     PORTA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
-
-    // Reset state machine flags
     servoPinDone[0] = false;
     servoPinDone[1] = false;
     servoPinDone[2] = false;
     servoPinDone[3] = false;
     servoActive     = true;
-
-    // ISR exits immediately — loop() handles pulling pins LOW
-    // Note: servoStartTick removed — was causing race condition
-    // because TCNT4 resets to 0 in CTC mode immediately after match
 }
 
 // Called every loop() iteration to complete the servo pulse.
-// Uses TCNT4 directly — in CTC mode TCNT4 counts 0 to 40000 (20ms).
-// servoTicks values are 2000-4000 (1ms-2ms), well within the 20ms window.
-// Simple timeout at 5000 ticks (2.5ms) cleans up if loop() is slow.
+// 5000 ticks = 2.5ms timeout (longest valid pulse = 2ms = 4000 ticks).
 void servoUpdate(void) {
     if (!servoActive) return;
 
     unsigned int elapsed = TCNT4;
 
-    // Safety timeout — 5000 ticks = 2.5ms
-    // Longest valid servo pulse is 2ms (4000 ticks)
-    // If we are past 2.5ms, force all pins LOW and finish
     if (elapsed > 5000) {
         PORTA &= ~(BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
         servoActive = false;
         return;
     }
 
-    // Pull each pin LOW when its tick count is reached
     if (!servoPinDone[0] && elapsed >= servoTicks[0]) {
         PORTA &= ~BASE_PIN;
         servoPinDone[0] = true;
@@ -183,7 +181,6 @@ void servoUpdate(void) {
         servoPinDone[3] = true;
     }
 
-    // All pins done — mark pulse complete
     if (servoPinDone[0] && servoPinDone[1] &&
         servoPinDone[2] && servoPinDone[3]) {
         servoActive = false;
@@ -256,9 +253,9 @@ static uint32_t measureChannelHz(bool s2High, bool s3High) {
 }
 
 static void readColorChannels(uint32_t *r, uint32_t *g, uint32_t *b) {
-    *r = measureChannelHz(false, false);  // S2=L S3=L → red
-    *g = measureChannelHz(true,  true);   // S2=H S3=H → green
-    *b = measureChannelHz(false, true);   // S2=L S3=H → blue
+    *r = measureChannelHz(false, false);  // S2=L S3=L -> red
+    *g = measureChannelHz(true,  true);   // S2=H S3=H -> green
+    *b = measureChannelHz(false, true);   // S2=L S3=H -> blue
 }
 
 // =============================================================
@@ -399,8 +396,8 @@ void setup(void) {
            | (1 << TCS_S2_BIT) | (1 << TCS_S3_BIT);
     DDRL &= ~(1 << TCS_OUT_BIT);
     PORTL &= ~(1 << TCS_OUT_BIT);
-    PORTL |=  (1 << TCS_S0_BIT);
-    PORTL &= ~(1 << TCS_S1_BIT);
+    PORTL |=  (1 << TCS_S0_BIT);   // S0 HIGH
+    PORTL &= ~(1 << TCS_S1_BIT);   // S1 LOW  -> 20% scaling
 
     // E-Stop — D21 = PD0 = INT0, input with pull-up, any-change ISR
     ESTOP_DDR  &= ~(1 << ESTOP_BIT);
@@ -429,13 +426,9 @@ void setup(void) {
 // =============================================================
 
 void loop(void) {
-    // Complete servo pulse — non-blocking, replaces old busy-wait ISR
     servoUpdate();
-
-    // Step arm joints towards target positions
     processMovement();
 
-    // Handle E-Stop state changes
     if (stateChanged) {
         cli();
         TState state = buttonState;
@@ -448,7 +441,6 @@ void loop(void) {
         sendStatus(state);
     }
 
-    // Receive and process one TPacket per loop iteration
     TPacket incoming;
     if (receiveFrame(&incoming)) {
         handleCommand(&incoming);
