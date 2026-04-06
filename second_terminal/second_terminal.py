@@ -122,10 +122,14 @@ def _printPacket(pkt):
 
     if ptype == PACKET_TYPE_RESPONSE:
         if cmd == RESP_OK:
-            new_speed = pkt['params'][0]
-            if new_speed > 0:
-                pct = round(new_speed / 255 * 100)
-                print(f"[robot] Speed updated -> {new_speed}/255 ({pct}%)")
+            debug_str = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
+            val = pkt['params'][0]
+            # Arm ACK: data field contains joint name set by sendArmAck() on Arduino
+            if debug_str in ('BASE', 'SHOULDER', 'ELBOW', 'GRIPPER', 'HOME'):
+                print(f"[robot] Arm accepted: {debug_str} -> {val} deg")
+            elif val > 0:
+                pct = round(val / 255 * 100)
+                print(f"[robot] Speed updated -> {val}/255 ({pct}%)")
 
         elif cmd == RESP_STATUS:
             state = pkt['params'][0]
@@ -141,9 +145,9 @@ def _printPacket(pkt):
         else:
             print(f"[robot] Response: unknown command {cmd}")
 
-        debug = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
-        if debug:
-            print(f"[robot] Debug: {debug}")
+        debug_str_raw = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
+        if debug_str_raw and debug_str_raw not in ('BASE', 'SHOULDER', 'ELBOW', 'GRIPPER', 'HOME'):
+            print(f"[robot] Debug: {debug_str_raw}")
 
     elif ptype == PACKET_TYPE_MESSAGE:
         msg = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
