@@ -102,17 +102,24 @@ volatile uint8_t       currentDir      = DIR_STOP;
 
 ISR(INT0_vect) {
     unsigned long now = millis();
-    if ((unsigned long)(now - lastButtonIsrMs) < 50) return;
+    if ((unsigned long)(now - lastButtonIsrMs) < 50) return;  // debounce
     lastButtonIsrMs = now;
 
     uint8_t pressed = (ESTOP_PINR & (1 << ESTOP_BIT)) ? 0 : 1;
 
-    if (buttonState == STATE_RUNNING && pressed) {
-        buttonState  = STATE_STOPPED;
-        stateChanged = true;
-    } else if (buttonState == STATE_STOPPED && !pressed) {
-        buttonState  = STATE_RUNNING;
-        stateChanged = true;
+    if (pressed) {
+        // Button just pressed — always go STOPPED
+        if (buttonState == STATE_RUNNING) {
+            buttonState  = STATE_STOPPED;
+            stateChanged = true;
+        }
+    } else {
+        static uint8_t pressCount = 0;
+        pressCount++;
+        if (pressCount % 2 == 0) {
+            buttonState  = STATE_RUNNING;
+            stateChanged = true;
+        }
     }
 }
 
