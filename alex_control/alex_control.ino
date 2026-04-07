@@ -26,8 +26,8 @@ const int GRIPPER_MIN  = 10,  GRIPPER_MAX  = 60;
 #define GRIPPER_PIN  (1 << PA3)
 
 // Gripper boots CLOSED (10°) to prevent snap-open on power-on
-volatile int          curPos[4]       = {90, 90, 90, 30};
-int                   targetPos[4]    = {90, 90, 90, 30};
+volatile int          curPos[4]       = {90, 90, 90, 20};
+int                   targetPos[4]    = {90, 90, 90, 20};
 int                   msPerDeg        = 1;
 unsigned long         lastMoveTime[4] = {0, 0, 0, 0};
 
@@ -364,7 +364,7 @@ static void handleCommand(const TPacket *cmd) {
             targetPos[0] = 90;
             targetPos[1] = 90;
             targetPos[2] = 90;
-            targetPos[3] = 30;   
+            targetPos[3] = 20;   
             sendArmAck("HOME", 90);
             break;
 
