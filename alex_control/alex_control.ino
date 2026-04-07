@@ -127,26 +127,32 @@ void updateTicks(void) {
 }
 
 ISR(TIMER4_COMPA_vect) {
+    // --- Snapshot tick thresholds BEFORE sei() ---
+    // Using local copies means updateTicks() running after sei() cannot corrupt the thresholds mid-pulse.
+    unsigned int t0 = servoTicks[0];
+    unsigned int t1 = servoTicks[1];
+    unsigned int t2 = servoTicks[2];
+    unsigned int t3 = servoTicks[3];
     // All servo pins HIGH — start of pulse window
     PORTA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
-
+    sei();
     // Busy-wait: pull each pin LOW at its exact tick count
     bool bActive = true, sActive = true, eActive = true, gActive = true;
     while (bActive || sActive || eActive || gActive) {
         unsigned int elapsed = TCNT4;
-        if (bActive && elapsed >= servoTicks[0]) {
+        if (bActive && elapsed >= t0) {
             PORTA &= ~BASE_PIN;
             bActive = false;
         }
-        if (sActive && elapsed >= servoTicks[1]) {
+        if (sActive && elapsed >= t1) {
             PORTA &= ~SHOULDER_PIN;
             sActive = false;
         }
-        if (eActive && elapsed >= servoTicks[2]) {
+        if (eActive && elapsed >= t2) {
             PORTA &= ~ELBOW_PIN;
             eActive = false;
         }
-        if (gActive && elapsed >= servoTicks[3]) {
+        if (gActive && elapsed >= t3) {
             PORTA &= ~GRIPPER_PIN;
             gActive = false;
         }
