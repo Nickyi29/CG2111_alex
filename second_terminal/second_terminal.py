@@ -128,7 +128,7 @@ def _printPacket(pkt):
             debug_str = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
             val = pkt['params'][0]
             if debug_str in ('BASE', 'SHOULDER', 'ELBOW', 'GRIPPER', 'HOME'):
-                _waiting_for_ack = False   # ← clear gate on ACK
+                _waiting_for_ack = False   # clear gate on ACK
                 print(f"[robot] Arm accepted: {debug_str} -> {val} deg")
             elif val > 0:
                 pct = round(val / 255 * 100)
@@ -137,6 +137,8 @@ def _printPacket(pkt):
         elif cmd == RESP_STATUS:
             state = pkt['params'][0]
             _estop_active = (state == STATE_STOPPED)
+            if _estop_active:
+                _waiting_for_ack = False  # clear gate on estop
             print(f"[robot] Status: {'STOPPED' if _estop_active else 'RUNNING'}")
 
         elif cmd == RESP_COLOR:
@@ -149,7 +151,9 @@ def _printPacket(pkt):
             print(f"[robot] Response: unknown command {cmd}")
 
         debug_str_raw = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
-        if debug_str_raw and debug_str_raw not in ('BASE', 'SHOULDER', 'ELBOW', 'GRIPPER', 'HOME'):
+        if debug_str_raw and debug_str_raw not in (
+                'BASE', 'SHOULDER', 'ELBOW', 'GRIPPER', 'HOME',
+                'E-Stop ON', 'E-Stop OFF'):
             print(f"[robot] Debug: {debug_str_raw}")
 
     elif ptype == PACKET_TYPE_MESSAGE:
@@ -169,101 +173,187 @@ def _printHelp():
     print("========================================")
     print("  ARM CONTROLS")
     print("========================================")
-    print("  h         Home (all joints to 90 deg)")
+    print("  h         Home (safe neutral position)")
     print("")
     print("  BASE (rotate left/right):")
     print("  j         Base LEFT  -> 60 deg")
     print("  r         Base RIGHT -> 120 deg")
+    print("  J         Base FAR LEFT  -> 45 deg")
+    print("  R         Base FAR RIGHT -> 135 deg")
     print("")
     print("  SHOULDER (raise/lower upper arm):")
-    print("  i         Shoulder UP   -> 120 deg")
-    print("  k         Shoulder DOWN -> 60 deg")
+    print("  i         Shoulder UP   -> 130 deg")
+    print("  k         Shoulder DOWN -> 50 deg")
+    print("  I         Shoulder HIGH -> 150 deg")
+    print("  K         Shoulder LOW  -> 30 deg")
     print("")
     print("  ELBOW (raise/lower forearm):")
-    print("  u         Elbow UP   -> 120 deg")
-    print("  o         Elbow DOWN -> 60 deg")
+    print("  u         Elbow UP   -> 130 deg")
+    print("  o         Elbow DOWN -> 50 deg")
+    print("  U         Elbow HIGH -> 150 deg")
+    print("  O         Elbow LOW  -> 20 deg")
     print("")
     print("  GRIPPER (open/close claw):")
     print("  n         Gripper OPEN  -> 90 deg")
     print("  m         Gripper CLOSE -> 10 deg")
     print("")
-    print("  EMERGENCY:")
-    print("  e         E-Stop (stops robot immediately)")
+    print("  SEQUENCES (one key pick-up helpers):")
+    print("  1         Reach down to floor")
+    print("  2         Grip and lift")
+    print("  3         Carry position")
     print("")
+    print("  EMERGENCY:")
+    print("  e         E-Stop")
     print("  q         Quit")
     print("========================================")
     print("")
 
-
 def _handleInput(line: str, client: TCPClient):
     global _waiting_for_ack
-    line = line.strip().lower()
+    line = line.strip()  # preserve case for uppercase variants
     if not line:
         return
 
-    # Block new arm commands until previous one is acknowledged
-    arm_keys = {'h', 'j', 'r', 'i', 'k', 'u', 'o', 'n', 'm'}
-    if line in arm_keys and _waiting_for_ack:
-        print('[second_terminal] Waiting for previous command to be accepted...')
-        return
+    arm_keys = {
+        'h','j','r','J','R',
+        'i','k','I','K',
+        'u','o','U','O',
+        'n','m',
+        '1','2','3'
+    }
 
-    if line in arm_keys:
-        _waiting_for_ack = True
-
-
-    if line == 'e':
+    if line.lower() == 'e':
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ESTOP)
         sendTPacketFrame(client.sock, frame)
         print('[second_terminal] Sent: E-STOP')
+        _waiting_for_ack = False  # always allow after estop
+        return
 
-    elif line == 'q':
+    if line.lower() == 'q':
         print('[second_terminal] Quitting.')
         raise KeyboardInterrupt
 
-    elif line == 'h':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_HOME)
-        sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: ARM HOME')
+    # Gate: block new arm command until previous ACK received
+    if line in arm_keys and _waiting_for_ack:
+        print('[second_terminal] Still moving — wait for acceptance...')
+        return
 
-    elif line == 'j':
+    # ---- BASE ----
+    if line == 'j':
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_BASE, params=[60])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: BASE LEFT  -> 60 deg')
+        print('[second_terminal] Sent: BASE LEFT -> 60 deg')
+        _waiting_for_ack = True
 
     elif line == 'r':
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_BASE, params=[120])
         sendTPacketFrame(client.sock, frame)
         print('[second_terminal] Sent: BASE RIGHT -> 120 deg')
+        _waiting_for_ack = True
 
-    elif line == 'i':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[120])
+    elif line == 'J':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_BASE, params=[45])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: SHOULDER UP   -> 120 deg')
+        print('[second_terminal] Sent: BASE FAR LEFT -> 45 deg')
+        _waiting_for_ack = True
+
+    elif line == 'R':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_BASE, params=[135])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: BASE FAR RIGHT -> 135 deg')
+        _waiting_for_ack = True
+
+    # ---- SHOULDER ----
+    elif line == 'i':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[130])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: SHOULDER UP -> 130 deg')
+        _waiting_for_ack = True
 
     elif line == 'k':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[60])
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[50])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: SHOULDER DOWN -> 60 deg')
+        print('[second_terminal] Sent: SHOULDER DOWN -> 50 deg')
+        _waiting_for_ack = True
 
-    elif line == 'u':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_ELBOW, params=[120])
+    elif line == 'I':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[150])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: ELBOW UP   -> 120 deg')
+        print('[second_terminal] Sent: SHOULDER HIGH -> 150 deg')
+        _waiting_for_ack = True
+
+    elif line == 'K':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[30])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: SHOULDER LOW -> 30 deg')
+        _waiting_for_ack = True
+
+    # ---- ELBOW ----
+    elif line == 'u':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_ELBOW, params=[130])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: ELBOW UP -> 130 deg')
+        _waiting_for_ack = True
 
     elif line == 'o':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_ELBOW, params=[60])
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_ELBOW, params=[50])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: ELBOW DOWN -> 60 deg')
+        print('[second_terminal] Sent: ELBOW DOWN -> 50 deg')
+        _waiting_for_ack = True
 
+    elif line == 'U':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_ELBOW, params=[150])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: ELBOW HIGH -> 150 deg')
+        _waiting_for_ack = True
+
+    elif line == 'O':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_ELBOW, params=[20])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: ELBOW LOW -> 20 deg')
+        _waiting_for_ack = True
+
+    # ---- GRIPPER ----
     elif line == 'n':
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[90])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: GRIPPER OPEN  -> 90 deg')
+        print('[second_terminal] Sent: GRIPPER OPEN -> 90 deg')
+        _waiting_for_ack = True
 
     elif line == 'm':
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[10])
         sendTPacketFrame(client.sock, frame)
         print('[second_terminal] Sent: GRIPPER CLOSE -> 10 deg')
+        _waiting_for_ack = True
+
+    # ---- HOME ----
+    elif line == 'h':
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_HOME)
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: ARM HOME')
+        _waiting_for_ack = True
+
+    # ---- SEQUENCES ----
+    elif line == '1':
+        # Reach down to floor — send shoulder down, then elbow extend
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[30])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: REACH DOWN — shoulder low')
+        _waiting_for_ack = True
+
+    elif line == '2':
+        # Close gripper and lift
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[10])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: GRIP AND LIFT — gripper close')
+        _waiting_for_ack = True
+
+    elif line == '3':
+        # Carry position — shoulder up, elbow tucked
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[130])
+        sendTPacketFrame(client.sock, frame)
+        print('[second_terminal] Sent: CARRY POSITION — shoulder high')
+        _waiting_for_ack = True
 
     else:
         print(f"[second_terminal] Unknown key: '{line}'")
