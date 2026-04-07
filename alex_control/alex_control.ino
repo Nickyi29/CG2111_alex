@@ -102,7 +102,7 @@ volatile uint8_t       currentDir      = DIR_STOP;
 
 ISR(INT0_vect) {
     unsigned long now = millis();
-    if ((unsigned long)(now - lastButtonIsrMs) < 50) return;  // debounce
+    if ((unsigned long)(now - lastButtonIsrMs) < 150) return;  // debounce
     lastButtonIsrMs = now;
 
     uint8_t pressed = (ESTOP_PINR & (1 << ESTOP_BIT)) ? 0 : 1;
