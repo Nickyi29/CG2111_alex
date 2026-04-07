@@ -264,17 +264,22 @@ def _handleInput(line: str, client: TCPClient):
         _waiting_for_ack = True
 
     # ---- SHOULDER ----
-    elif line == 'i':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[130])
-        sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: SHOULDER UP -> 130 deg')
-        _waiting_for_ack = True
+elif line == 'i':
+    # Slow down first, then move shoulder
+    frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SPEED, params=[5])
+    sendTPacketFrame(client.sock, frame)
+    frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[150])
+    sendTPacketFrame(client.sock, frame)
+    print('[second_terminal] Sent: SHOULDER FORWARD -> 150 deg (slow)')
+    _waiting_for_ack = True
 
-    elif line == 'k':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[50])
-        sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: SHOULDER DOWN -> 50 deg')
-        _waiting_for_ack = True
+elif line == 'k':
+    frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SPEED, params=[5])
+    sendTPacketFrame(client.sock, frame)
+    frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[100])
+    sendTPacketFrame(client.sock, frame)
+    print('[second_terminal] Sent: SHOULDER BACK -> 100 deg (slow)')
+    _waiting_for_ack = True
 
     elif line == 'I':
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[150])
@@ -335,29 +340,32 @@ def _handleInput(line: str, client: TCPClient):
 
     # ---- SEQUENCES ----
     elif line == '1':
-        # Reach down to floor — send shoulder down, then elbow extend
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[30])
-        sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: REACH DOWN — shoulder low')
-        _waiting_for_ack = True
+    # Step 1: Lean arm forward toward floor
+    frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[150])
+    sendTPacketFrame(client.sock, frame)
+    print('[second_terminal] Sent: REACH FORWARD — shoulder 150 deg')
+    _waiting_for_ack = True
 
-    elif line == '2':
-        # Close gripper and lift
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[10])
-        sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: GRIP AND LIFT — gripper close')
-        _waiting_for_ack = True
+elif line == '2':
+    # Step 2: Lower elbow to floor level
+    frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_ELBOW, params=[20])
+    sendTPacketFrame(client.sock, frame)
+    print('[second_terminal] Sent: LOWER ELBOW -> 20 deg')
+    _waiting_for_ack = True
 
-    elif line == '3':
-        # Carry position — shoulder up, elbow tucked
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[130])
-        sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: CARRY POSITION — shoulder high')
-        _waiting_for_ack = True
+elif line == '3':
+    # Step 3: Lift — raise elbow back
+    frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_ELBOW, params=[120])
+    sendTPacketFrame(client.sock, frame)
+    print('[second_terminal] Sent: LIFT ELBOW -> 120 deg')
+    _waiting_for_ack = True
 
-    else:
-        print(f"[second_terminal] Unknown key: '{line}'")
-        _printHelp()
+elif line == '4':
+    # Step 4: Carry — pull shoulder back
+    frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SHOULDER, params=[100])
+    sendTPacketFrame(client.sock, frame)
+    print('[second_terminal] Sent: CARRY — shoulder 100 deg')
+    _waiting_for_ack = True
 
 
 def run():
