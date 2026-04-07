@@ -73,6 +73,9 @@ TPACKET_FMT  = f'<BB2x{MAX_STR_LEN}s{PARAMS_COUNT}I'
 MAGIC      = b'\xDE\xAD'
 FRAME_SIZE = len(MAGIC) + TPACKET_SIZE + 1
 
+_waiting_for_ack = False
+
+
 
 def _computeChecksum(data: bytes) -> int:
     result = 0
@@ -115,7 +118,7 @@ _estop_active = False
 
 
 def _printPacket(pkt):
-    global _estop_active
+    global _estop_active, _waiting_for_ack
 
     ptype = pkt['packetType']
     cmd   = pkt['command']
@@ -124,8 +127,8 @@ def _printPacket(pkt):
         if cmd == RESP_OK:
             debug_str = pkt['data'].rstrip(b'\x00').decode('ascii', errors='replace')
             val = pkt['params'][0]
-            # Arm ACK: data field contains joint name set by sendArmAck() on Arduino
             if debug_str in ('BASE', 'SHOULDER', 'ELBOW', 'GRIPPER', 'HOME'):
+                _waiting_for_ack = False   # ← clear gate on ACK
                 print(f"[robot] Arm accepted: {debug_str} -> {val} deg")
             elif val > 0:
                 pct = round(val / 255 * 100)
@@ -193,9 +196,20 @@ def _printHelp():
 
 
 def _handleInput(line: str, client: TCPClient):
+    global _waiting_for_ack
     line = line.strip().lower()
     if not line:
         return
+
+    # Block new arm commands until previous one is acknowledged
+    arm_keys = {'h', 'j', 'r', 'i', 'k', 'u', 'o', 'n', 'm'}
+    if line in arm_keys and _waiting_for_ack:
+        print('[second_terminal] Waiting for previous command to be accepted...')
+        return
+
+    if line in arm_keys:
+        _waiting_for_ack = True
+
 
     if line == 'e':
         frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ESTOP)
