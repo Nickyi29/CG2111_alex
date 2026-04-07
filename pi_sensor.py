@@ -3,9 +3,6 @@
 pi_sensor.py
 CG2111A — Alex Robot
 Operator 1: robot movement, sensors, relay host.
-
-CHANGES:
-  - Removed openCamera() from __main__ — camera opens lazily on first 'p' press.
 """
 
 import struct
@@ -23,22 +20,33 @@ from alex_camera import (
 from lidar_example_cli_plot import plot_single_scan
 from second_terminal import relay
 
+# ----------------------------------------------------------------
+# SERIAL PORT SETUP
+# ----------------------------------------------------------------
+
 PORT     = "/dev/ttyACM0"
 BAUDRATE = 115200
 
 _ser = None
 
+
 def openSerial():
     global _ser
-    _ser = serial.Serial(PORT, BAUDRATE, timeout=5)
+    _ser = serial.Serial(PORT, BAUDRATE, timeout=0.1)  # non-blocking reads
     print(f"Opened {PORT} at {BAUDRATE} baud. Waiting for Arduino...")
     time.sleep(2)
     print("Ready.\n")
+
 
 def closeSerial():
     global _ser
     if _ser and _ser.is_open:
         _ser.close()
+
+
+# ----------------------------------------------------------------
+# TPACKET CONSTANTS — must stay in sync with packets.h
+# ----------------------------------------------------------------
 
 PACKET_TYPE_COMMAND  = 0
 PACKET_TYPE_RESPONSE = 1
@@ -114,11 +122,14 @@ def receiveFrame():
     magic_lo = MAGIC[1]
 
     while True:
+        if _ser.in_waiting == 0:   # return immediately if no bytes waiting
+            return None
         b = _ser.read(1)
         if not b:
             return None
         if b[0] != magic_hi:
             continue
+
         b = _ser.read(1)
         if not b:
             return None
@@ -147,11 +158,20 @@ def sendCommand(commandType, data=b'', params=None):
     _ser.flush()
 
 
+# ----------------------------------------------------------------
+# E-STOP STATE
+# ----------------------------------------------------------------
+
 _estop_state = STATE_RUNNING
+
 
 def isEstopActive():
     return _estop_state == STATE_STOPPED
 
+
+# ----------------------------------------------------------------
+# PACKET DISPLAY
+# ----------------------------------------------------------------
 
 def printPacket(pkt):
     global _estop_state
@@ -199,6 +219,10 @@ def printPacket(pkt):
         print(f"Packet: type={ptype}, cmd={cmd}")
 
 
+# ----------------------------------------------------------------
+# COLOR SENSOR
+# ----------------------------------------------------------------
+
 def handleColorCommand():
     if isEstopActive():
         print("Refused: E-Stop is active")
@@ -207,18 +231,25 @@ def handleColorCommand():
     sendCommand(COMMAND_COLOR)
 
 
+# ----------------------------------------------------------------
+# CAMERA
+# ----------------------------------------------------------------
+
 _camera           = None
 _frames_remaining = 5
+
 
 def openCamera():
     global _camera
     _camera = cameraOpen()
+
 
 def closeCamera():
     global _camera
     if _camera is not None:
         cameraClose(_camera)
         _camera = None
+
 
 def handleCameraCommand():
     global _frames_remaining
@@ -236,6 +267,10 @@ def handleCameraCommand():
     print(f"Frames remaining: {_frames_remaining}")
 
 
+# ----------------------------------------------------------------
+# LIDAR
+# ----------------------------------------------------------------
+
 def handleLidarCommand():
     if isEstopActive():
         print("Refused: E-Stop is active")
@@ -243,6 +278,10 @@ def handleLidarCommand():
     print("Starting single LIDAR scan...")
     plot_single_scan()
 
+
+# ----------------------------------------------------------------
+# USER INPUT
+# ----------------------------------------------------------------
 
 def handleUserInput(line):
     if line == 'e':
@@ -302,6 +341,10 @@ def handleUserInput(line):
         print(f"Unknown: '{line}'. Valid: w/a/s/d, e, c, p, l, +/-, x")
 
 
+# ----------------------------------------------------------------
+# MAIN LOOP
+# ----------------------------------------------------------------
+
 def runCommandInterface():
     print("Sensor interface ready.")
     print("Controls: w=forward s=backward a=left d=right  x=stop")
@@ -310,6 +353,7 @@ def runCommandInterface():
     print("Press Ctrl+C to exit.\n")
 
     while True:
+        # Drain all pending packets from Arduino
         while _ser.in_waiting >= FRAME_SIZE:
             pkt = receiveFrame()
             if pkt:
@@ -323,19 +367,22 @@ def runCommandInterface():
                     )
                 )
 
+        # Check for keyboard input
         rlist, _, _ = select.select([sys.stdin], [], [], 0)
         if rlist:
             line = sys.stdin.readline().strip().lower()
             if line:
                 handleUserInput(line)
 
+        # Forward commands from Terminal 2 to Arduino
         relay.checkSecondTerminal(_ser)
-        time.sleep(0.02)
+
+        time.sleep(0.005)  # was 0.02 — shorter sleep = more responsive
 
 
 if __name__ == '__main__':
     openSerial()
-    # openCamera() intentionally removed — opens lazily on first 'p'
+    # openCamera() intentionally not here — lazy open on first 'p'
     relay.start()
 
     try:
