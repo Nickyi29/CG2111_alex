@@ -26,11 +26,11 @@ const int GRIPPER_MIN  = 10,  GRIPPER_MAX  = 90;
 #define ELBOW_PIN    (1 << PA2)
 #define GRIPPER_PIN  (1 << PA3)
 
-volatile int          curPos[4]       = {90, 90, 90, 90};
-int                   targetPos[4]    = {90, 90, 90, 90};
+volatile int          curPos[4]       = {90, 90, 90, 10};
+int                   targetPos[4]    = {90, 90, 90, 10};
 int                   msPerDeg        = 10;
 unsigned long         lastMoveTime[4] = {0, 0, 0, 0};
-volatile unsigned int servoTicks[4]   = {3000, 3000, 3000, 3000};
+volatile unsigned int servoTicks[4]   = {3000, 3000, 3000, 2111};
 
 // =============================================================
 // Direction constants — must match robotlib.ino
@@ -382,6 +382,8 @@ void setup(void) {
 
     // Port A — servo signal outputs (PA0-PA3 = D22-D25)
     DDRA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
+    PORTA &= ~(BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
+
 
     // Port L — TCS3200 (D42-D46 = PL7-PL3)
     DDRL |=  (1 << TCS_S0_BIT) | (1 << TCS_S1_BIT)
@@ -400,6 +402,7 @@ void setup(void) {
 
     // Timer4: 16-bit CTC, 20ms period
     updateTicks();
+    delay(500);
     cli();
     TCCR4A = 0;
     TCCR4B = 0;
