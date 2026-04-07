@@ -161,18 +161,18 @@ ISR(TIMER4_COMPA_vect) {
 void servoUpdate(void) {
     if (!servoActive) return;
 
+    cli();
     unsigned int elapsed = TCNT4;
+    sei();
 
-    // Safety timeout — 5000 ticks = 2.5ms
-    // Longest valid servo pulse is 2ms (4000 ticks)
-    // If we are past 2.5ms, force all pins LOW and finish
+    // Safety timeout — if loop() was too slow and we missed the window,
+    // just force all pins LOW and bail out cleanly
     if (elapsed > 5000) {
         PORTA &= ~(BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
         servoActive = false;
         return;
     }
 
-    // Pull each pin LOW when its tick count is reached
     if (!servoPinDone[0] && elapsed >= servoTicks[0]) {
         PORTA &= ~BASE_PIN;
         servoPinDone[0] = true;
@@ -190,28 +190,30 @@ void servoUpdate(void) {
         servoPinDone[3] = true;
     }
 
-    // All pins done — mark pulse complete
     if (servoPinDone[0] && servoPinDone[1] &&
         servoPinDone[2] && servoPinDone[3]) {
         servoActive = false;
     }
 }
-
 // =============================================================
 // Arm movement — non-blocking
 // =============================================================
 
 void processMovement(void) {
-    unsigned long now = millis();
+    unsigned long now     = millis();
+    bool          changed = false;
+
     for (int i = 0; i < 4; i++) {
         if (curPos[i] != targetPos[i] &&
             (unsigned long)(now - lastMoveTime[i]) >= (unsigned long)msPerDeg) {
             if (targetPos[i] > curPos[i]) curPos[i]++;
             else                          curPos[i]--;
             lastMoveTime[i] = now;
-            updateTicks();
+            changed = true;
         }
     }
+
+    if (changed) updateTicks();   // ← only once per loop, not per joint
 }
 
 // =============================================================
