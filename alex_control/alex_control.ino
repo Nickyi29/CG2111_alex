@@ -29,7 +29,7 @@ const int GRIPPER_MIN  = 10,  GRIPPER_MAX  = 90;
 // Gripper boots CLOSED (10°) to prevent snap-open on power-on
 volatile int          curPos[4]       = {90, 90, 90, 10};
 int                   targetPos[4]    = {90, 90, 90, 10};
-int                   msPerDeg        = 3;
+int                   msPerDeg        = 1;
 unsigned long         lastMoveTime[4] = {0, 0, 0, 0};
 
 // 10° = 2000 + (10 * 2000 / 180) = 2111 ticks
