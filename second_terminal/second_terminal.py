@@ -334,15 +334,15 @@ def _handleInput(line: str, client: TCPClient):
 
     # ---- GRIPPER ----
     elif line == 'n':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[60])
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[40])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: GRIPPER OPEN -> 60 deg')
+        print('[second_terminal] Sent: GRIPPER OPEN -> 40 deg')
         _waiting_for_ack = True
 
     elif line == 'm':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[10])
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[80])
         sendTPacketFrame(client.sock, frame)
-        print('[second_terminal] Sent: GRIPPER CLOSE -> 10 deg')
+        print('[second_terminal] Sent: GRIPPER CLOSE -> 80 deg')
         _waiting_for_ack = True
 
     # ---- PICK-UP SEQUENCES ----
