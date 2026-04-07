@@ -26,10 +26,13 @@ const int GRIPPER_MIN  = 10,  GRIPPER_MAX  = 90;
 #define ELBOW_PIN    (1 << PA2)
 #define GRIPPER_PIN  (1 << PA3)
 
+// Gripper boots CLOSED (10°) to prevent snap-open on power-on
 volatile int          curPos[4]       = {90, 90, 90, 10};
 int                   targetPos[4]    = {90, 90, 90, 10};
-int                   msPerDeg        = 10;
+int                   msPerDeg        = 3;
 unsigned long         lastMoveTime[4] = {0, 0, 0, 0};
+
+// 10° = 2000 + (10 * 2000 / 180) = 2111 ticks
 volatile unsigned int servoTicks[4]   = {3000, 3000, 3000, 2111};
 
 // =============================================================
@@ -109,14 +112,13 @@ ISR(INT0_vect) {
 }
 
 // =============================================================
-// Servo PWM — Timer4 CTC, BLOCKING ISR (same approach as sample code)
+// Servo PWM — Timer4 CTC, blocking ISR
 // Busy-wait inside ISR pulls pins LOW at exact tick counts.
 // Max blocking time = 2ms (longest servo pulse).
 // Serial bytes are hardware-buffered so nothing is lost.
 // =============================================================
 
 void updateTicks(void) {
-    // Map 0-180 deg -> 2000-4000 ticks (1.0ms-2.0ms pulse @ 2MHz)
     cli();
     for (int i = 0; i < 4; i++) {
         servoTicks[i] = 2000 + (unsigned int)((long)curPos[i] * 2000 / 180);
@@ -129,7 +131,6 @@ ISR(TIMER4_COMPA_vect) {
     PORTA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
 
     // Busy-wait: pull each pin LOW at its exact tick count
-    // Mirrors the sample code approach — precise and jitter-free
     bool bActive = true, sActive = true, eActive = true, gActive = true;
     while (bActive || sActive || eActive || gActive) {
         unsigned int elapsed = TCNT4;
@@ -150,7 +151,6 @@ ISR(TIMER4_COMPA_vect) {
             gActive = false;
         }
     }
-    // ISR exits after all pins are LOW — total time ~1-2ms
 }
 
 // =============================================================
@@ -170,7 +170,7 @@ void processMovement(void) {
             changed = true;
         }
     }
-    if (changed) updateTicks();  // only recalculate once per loop if anything moved
+    if (changed) updateTicks();
 }
 
 // =============================================================
@@ -357,6 +357,7 @@ static void handleCommand(const TPacket *cmd) {
         case COMMAND_ARM_HOME:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
             for (int i = 0; i < 4; i++) targetPos[i] = 90;
+            targetPos[3] = 10;  // gripper homes to closed
             sendArmAck("HOME", 90);
             break;
 
@@ -380,10 +381,10 @@ void setup(void) {
     Serial.begin(115200);
 #endif
 
-    // Port A — servo signal outputs (PA0-PA3 = D22-D25)
-    DDRA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
+    // Port A — servo pins as outputs, immediately LOW
+    // Prevents noise reaching servos during boot sequence
+    DDRA  |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
     PORTA &= ~(BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
-
 
     // Port L — TCS3200 (D42-D46 = PL7-PL3)
     DDRL |=  (1 << TCS_S0_BIT) | (1 << TCS_S1_BIT)
@@ -400,9 +401,11 @@ void setup(void) {
     EICRA |=  (1 << ISC00);
     EIMSK |=  (1 << INT0);
 
-    // Timer4: 16-bit CTC, 20ms period
+    // Settle delay — let servos stabilise before first PWM pulse
     updateTicks();
     delay(500);
+
+    // Timer4: 16-bit CTC, 20ms period for servo PWM
     cli();
     TCCR4A = 0;
     TCCR4B = 0;
@@ -426,9 +429,6 @@ void loop(void) {
         sendStatus(STATE_RUNNING);
         startupBroadcastDone = true;
     }
-
-    // NOTE: servoUpdate() removed — servo timing now handled
-    // entirely inside TIMER4_COMPA_vect (blocking ISR approach)
 
     processMovement();
 
