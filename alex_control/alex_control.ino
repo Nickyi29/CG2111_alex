@@ -1,13 +1,6 @@
 /*
  * alex_control.ino
  * CG2111A — Alex Robot
- *
- * CHANGE FROM PREVIOUS VERSION:
- *   Fixed race condition in servoUpdate() wrap detection.
- *   servoStartTick captured TCNT4 before CTC reset, causing
- *   elapsed < servoStartTick to trigger immediately and force
- *   all servo pins LOW — giving servos a 0-duration pulse.
- *   Fixed by replacing wrap detection with a simple 2.5ms timeout.
  */
 
 #include <avr/io.h>
@@ -37,11 +30,7 @@ volatile int          curPos[4]       = {90, 90, 90, 90};
 int                   targetPos[4]    = {90, 90, 90, 90};
 int                   msPerDeg        = 10;
 unsigned long         lastMoveTime[4] = {0, 0, 0, 0};
-volatile unsigned int servoTicks[4] = {3000, 3000, 3000, 3000}; // 90° default = 1500us pulse
-
-// Non-blocking servo state machine
-volatile bool servoActive     = false;
-volatile bool servoPinDone[4] = {false, false, false, false};
+volatile unsigned int servoTicks[4]   = {3000, 3000, 3000, 3000};
 
 // =============================================================
 // Direction constants — must match robotlib.ino
@@ -66,13 +55,11 @@ volatile bool servoPinDone[4] = {false, false, false, false};
 // Pin definitions
 // =============================================================
 
-// ---- E-Stop: D21 = PD0 = INT0 ----
 #define ESTOP_DDR  DDRD
 #define ESTOP_PORT PORTD
 #define ESTOP_PINR PIND
 #define ESTOP_BIT  PD0
 
-// ---- TCS3200 control: D42-D45 = PL7-PL4 (outputs) ----
 #define TCS_CTRL_DDR  DDRL
 #define TCS_CTRL_PORT PORTL
 #define TCS_S0_BIT    PL7
@@ -80,7 +67,6 @@ volatile bool servoPinDone[4] = {false, false, false, false};
 #define TCS_S2_BIT    PL5
 #define TCS_S3_BIT    PL4
 
-// ---- TCS3200 OUT: D46 = PL3 (input, polled) ----
 #define TCS_OUT_DDR  DDRL
 #define TCS_OUT_PORT PORTL
 #define TCS_OUT_PINR PINL
@@ -102,13 +88,12 @@ volatile uint8_t       currentDir      = DIR_STOP;
 
 ISR(INT0_vect) {
     unsigned long now = millis();
-    if ((unsigned long)(now - lastButtonIsrMs) < 150) return;  // debounce
+    if ((unsigned long)(now - lastButtonIsrMs) < 200) return;
     lastButtonIsrMs = now;
 
     uint8_t pressed = (ESTOP_PINR & (1 << ESTOP_BIT)) ? 0 : 1;
 
     if (pressed) {
-        // Button just pressed — always go STOPPED
         if (buttonState == STATE_RUNNING) {
             buttonState  = STATE_STOPPED;
             stateChanged = true;
@@ -124,79 +109,52 @@ ISR(INT0_vect) {
 }
 
 // =============================================================
-// Servo PWM — Timer 4 CTC, non-blocking state machine
+// Servo PWM — Timer4 CTC, BLOCKING ISR (same approach as sample code)
+// Busy-wait inside ISR pulls pins LOW at exact tick counts.
+// Max blocking time = 2ms (longest servo pulse).
+// Serial bytes are hardware-buffered so nothing is lost.
 // =============================================================
 
 void updateTicks(void) {
-    unsigned int newTicks[4];
-    for (int i = 0; i < 4; i++) {
-        newTicks[i] = 2000 + (unsigned int)((long)curPos[i] * 2000 / 180);
-    }
+    // Map 0-180 deg -> 2000-4000 ticks (1.0ms-2.0ms pulse @ 2MHz)
     cli();
-    for (int i = 0; i < 4; i++) servoTicks[i] = newTicks[i];
+    for (int i = 0; i < 4; i++) {
+        servoTicks[i] = 2000 + (unsigned int)((long)curPos[i] * 2000 / 180);
+    }
     sei();
 }
 
-// ISR fires every 20ms — takes ~2µs, does not block serial RX
 ISR(TIMER4_COMPA_vect) {
     // All servo pins HIGH — start of pulse window
     PORTA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
 
-    // Reset state machine flags
-    servoPinDone[0] = false;
-    servoPinDone[1] = false;
-    servoPinDone[2] = false;
-    servoPinDone[3] = false;
-    servoActive     = true;
-
-    // ISR exits immediately — loop() handles pulling pins LOW
-    // Note: servoStartTick removed — was causing race condition
-    // because TCNT4 resets to 0 in CTC mode immediately after match
+    // Busy-wait: pull each pin LOW at its exact tick count
+    // Mirrors the sample code approach — precise and jitter-free
+    bool bActive = true, sActive = true, eActive = true, gActive = true;
+    while (bActive || sActive || eActive || gActive) {
+        unsigned int elapsed = TCNT4;
+        if (bActive && elapsed >= servoTicks[0]) {
+            PORTA &= ~BASE_PIN;
+            bActive = false;
+        }
+        if (sActive && elapsed >= servoTicks[1]) {
+            PORTA &= ~SHOULDER_PIN;
+            sActive = false;
+        }
+        if (eActive && elapsed >= servoTicks[2]) {
+            PORTA &= ~ELBOW_PIN;
+            eActive = false;
+        }
+        if (gActive && elapsed >= servoTicks[3]) {
+            PORTA &= ~GRIPPER_PIN;
+            gActive = false;
+        }
+    }
+    // ISR exits after all pins are LOW — total time ~1-2ms
 }
 
-// Called every loop() iteration to complete the servo pulse.
-// Uses TCNT4 directly — in CTC mode TCNT4 counts 0 to 40000 (20ms).
-// servoTicks values are 2000-4000 (1ms-2ms), well within the 20ms window.
-// Simple timeout at 5000 ticks (2.5ms) cleans up if loop() is slow.
-void servoUpdate(void) {
-    if (!servoActive) return;
-
-    cli();
-    unsigned int elapsed = TCNT4;
-    sei();
-
-    // Safety timeout — if loop() was too slow and we missed the window,
-    // just force all pins LOW and bail out cleanly
-    if (elapsed > 5000) {
-        PORTA &= ~(BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
-        servoActive = false;
-        return;
-    }
-
-    if (!servoPinDone[0] && elapsed >= servoTicks[0]) {
-        PORTA &= ~BASE_PIN;
-        servoPinDone[0] = true;
-    }
-    if (!servoPinDone[1] && elapsed >= servoTicks[1]) {
-        PORTA &= ~SHOULDER_PIN;
-        servoPinDone[1] = true;
-    }
-    if (!servoPinDone[2] && elapsed >= servoTicks[2]) {
-        PORTA &= ~ELBOW_PIN;
-        servoPinDone[2] = true;
-    }
-    if (!servoPinDone[3] && elapsed >= servoTicks[3]) {
-        PORTA &= ~GRIPPER_PIN;
-        servoPinDone[3] = true;
-    }
-
-    if (servoPinDone[0] && servoPinDone[1] &&
-        servoPinDone[2] && servoPinDone[3]) {
-        servoActive = false;
-    }
-}
 // =============================================================
-// Arm movement — non-blocking
+// Arm movement — non-blocking, steps 1 deg per msPerDeg ms
 // =============================================================
 
 void processMovement(void) {
@@ -212,8 +170,7 @@ void processMovement(void) {
             changed = true;
         }
     }
-
-    if (changed) updateTicks();   // ← only once per loop, not per joint
+    if (changed) updateTicks();  // only recalculate once per loop if anything moved
 }
 
 // =============================================================
@@ -231,6 +188,17 @@ static void sendResponse(TResponseType resp, uint32_t param) {
 
 static void sendStatus(TState state) {
     sendResponse(RESP_STATUS, (uint32_t)state);
+}
+
+static void sendArmAck(const char *joint, uint32_t targetDeg) {
+    TPacket pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.packetType = PACKET_TYPE_RESPONSE;
+    pkt.command    = RESP_OK;
+    pkt.params[0]  = targetDeg;
+    strncpy(pkt.data, joint, sizeof(pkt.data) - 1);
+    pkt.data[sizeof(pkt.data) - 1] = '\0';
+    sendFrame(&pkt);
 }
 
 // =============================================================
@@ -265,28 +233,9 @@ static uint32_t measureChannelHz(bool s2High, bool s3High) {
 }
 
 static void readColorChannels(uint32_t *r, uint32_t *g, uint32_t *b) {
-    *r = measureChannelHz(false, false);  // S2=L S3=L → red
-    *g = measureChannelHz(true,  true);   // S2=H S3=H → green
-    *b = measureChannelHz(false, true);   // S2=L S3=H → blue
-}
-
-// =============================================================
-// Arm command acknowledgement helper
-// Sends RESP_OK with the accepted target degree so both terminals
-// can confirm the Arduino actually received and accepted the command.
-// Without this, a silent E-Stop rejection looks identical to acceptance
-// from the operator's perspective.
-// =============================================================
-
-static void sendArmAck(const char *joint, uint32_t targetDeg) {
-    TPacket pkt;
-    memset(&pkt, 0, sizeof(pkt));
-    pkt.packetType = PACKET_TYPE_RESPONSE;
-    pkt.command    = RESP_OK;
-    pkt.params[0]  = targetDeg;
-    strncpy(pkt.data, joint, sizeof(pkt.data) - 1);
-    pkt.data[sizeof(pkt.data) - 1] = '\0';
-    sendFrame(&pkt);
+    *r = measureChannelHz(false, false);
+    *g = measureChannelHz(true,  true);
+    *b = measureChannelHz(false, true);
 }
 
 // =============================================================
@@ -300,19 +249,26 @@ static void handleCommand(const TPacket *cmd) {
 
         case COMMAND_ESTOP: {
             cli();
-            buttonState  = STATE_STOPPED;
+            TState newState = (buttonState == STATE_RUNNING)
+                              ? STATE_STOPPED
+                              : STATE_RUNNING;
+            buttonState  = newState;
             stateChanged = false;
             sei();
-            currentDir = DIR_STOP;
-            stop();
+            if (newState == STATE_STOPPED) {
+                currentDir = DIR_STOP;
+                stop();
+            }
             TPacket pkt;
             memset(&pkt, 0, sizeof(pkt));
             pkt.packetType = PACKET_TYPE_RESPONSE;
             pkt.command    = RESP_OK;
-            strncpy(pkt.data, "E-Stop activated", sizeof(pkt.data) - 1);
+            strncpy(pkt.data,
+                    (newState == STATE_STOPPED) ? "E-Stop ON" : "E-Stop OFF",
+                    sizeof(pkt.data) - 1);
             pkt.data[sizeof(pkt.data) - 1] = '\0';
             sendFrame(&pkt);
-            sendStatus(STATE_STOPPED);
+            sendStatus(newState);
             break;
         }
 
@@ -442,9 +398,7 @@ void setup(void) {
     EICRA |=  (1 << ISC00);
     EIMSK |=  (1 << INT0);
 
-    // Timer 4: 16-bit CTC, 20ms period for servo PWM
-    // updateTicks() is called BEFORE cli() so its internal cli/sei runs cleanly,
-    // and servoTicks are valid before the very first ISR fires.
+    // Timer4: 16-bit CTC, 20ms period
     updateTicks();
     cli();
     TCCR4A = 0;
@@ -464,21 +418,17 @@ void setup(void) {
 // =============================================================
 
 void loop(void) {
-    // On the very first loop iteration, broadcast STATUS_RUNNING so both
-    // operator terminals know the Arduino started up in a RUNNING state.
     static bool startupBroadcastDone = false;
     if (!startupBroadcastDone) {
         sendStatus(STATE_RUNNING);
         startupBroadcastDone = true;
     }
 
-    // Complete servo pulse — non-blocking, replaces old busy-wait ISR
-    servoUpdate();
+    // NOTE: servoUpdate() removed — servo timing now handled
+    // entirely inside TIMER4_COMPA_vect (blocking ISR approach)
 
-    // Step arm joints towards target positions
     processMovement();
 
-    // Handle E-Stop state changes
     if (stateChanged) {
         cli();
         TState state = buttonState;
@@ -491,7 +441,6 @@ void loop(void) {
         sendStatus(state);
     }
 
-    // Receive and process one TPacket per loop iteration
     TPacket incoming;
     if (receiveFrame(&incoming)) {
         handleCommand(&incoming);
