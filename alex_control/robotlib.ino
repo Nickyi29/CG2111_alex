@@ -60,9 +60,8 @@ void motorsInit(void) {
     // but set as outputs to avoid floating
     DDRB |= (1 << PB5);    // D11
     DDRE |= (1 << PE5);    // D3
-    OCR1A = 0;
-    OCR3C = 0;
-
+OCR1A = 255;   // was 0 — right side enable, must be HIGH
+OCR3C = 255;   // was 0 — set high too
     srWrite(0x00);
 }
 
