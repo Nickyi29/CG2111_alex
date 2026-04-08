@@ -270,7 +270,7 @@ def _handleInput(line: str, client: TCPClient):
             _sendArm(client, COMMAND_ARM_SHOULDER, deg, 'SHOULDER')
 
         elif joint == 'e':
-            if not (10 <= deg <= 170):
+            if not (10 <= deg <= 200):
                 print(f'[second_terminal] Elbow out of range (10-200): {deg}')
                 return
             _sendArm(client, COMMAND_ARM_ELBOW, deg, 'ELBOW')
