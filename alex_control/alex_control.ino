@@ -18,7 +18,7 @@
 const int BASE_MIN     = 30,  BASE_MAX     = 150;
 const int SHOULDER_MIN = 60,  SHOULDER_MAX = 170;  
 const int ELBOW_MIN    = 10,  ELBOW_MAX    = 170;
-const int GRIPPER_MIN  = 40,  GRIPPER_MAX  = 120;
+const int GRIPPER_MIN  = 40,  GRIPPER_MAX  = 150;
 // Servo signal pins — D22-D25 = PA0-PA3
 #define BASE_PIN     (1 << PA0)
 #define SHOULDER_PIN (1 << PA1)
