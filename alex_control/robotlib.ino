@@ -77,12 +77,14 @@ void motorsInit(void) {
     DDRE |= (1 << PE5);    // D3  OC3C — left side PWM
 
     // Timer 1: Fast PWM 8-bit, OC1A non-inverting, prescaler 64
-    TCCR1A = (1 << COM1A1) | (1 << WGM11) | (1 << WGM10);
-    TCCR1B = (1 << WGM12)  | (1 << CS11)  | (1 << CS10);
+    // ← RESTORED to original working values, WGM11 removed
+    TCCR1A = (1 << COM1A1) | (1 << WGM10);
+    TCCR1B = (1 << WGM12)  | (1 << CS11) | (1 << CS10);
     OCR1A  = 0;
 
     // Timer 3: Fast PWM 8-bit, OC3C non-inverting, prescaler 64
-    TCCR3A = (1 << COM3C1) | (1 << WGM31) | (1 << WGM30);  // ← WGM31 added
+    // ← Only change: WGM31 added to TCCR3A
+    TCCR3A = (1 << COM3C1) | (1 << WGM31) | (1 << WGM30);
     TCCR3B = (1 << WGM32)  | (1 << CS31)  | (1 << CS30);
     OCR3C  = 0;
 
