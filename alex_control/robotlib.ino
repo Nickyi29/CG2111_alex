@@ -2,11 +2,9 @@
  * robotlib.ino
  * CG2111A — Alex Robot
  *
- * CRITICAL FIX: MH Electronics shield uses D9/D10 for motor enable pins.
- * Shield designed for Uno where D9=OC1A, D10=OC1B.
- * On Mega: D9=PH6=OC2B, D10=PB4=OC2A — both on Timer2.
- * Previous code used D11(OC1A) and D3(OC3C) — wrong pins, enables floated HIGH.
- * Now using Timer2 on D9/D10 — speed control works on ALL motors.
+ * Speed control via software PWM on shift register direction bits.
+ * All L293D enables are hardwired HIGH on this shield.
+ * Speed is controlled by toggling direction bits ON/OFF at a duty cycle.
  */
 
 #define STOP_DIR 0
@@ -31,9 +29,14 @@
 #define BR_FWD (1 << 1)   // 0x02
 #define BR_BWD (1 << 4)   // 0x10
 
+// Software PWM state
+static uint8_t  _currentSr   = 0x00;  // current direction byte
+static uint8_t  _swDuty      = 255;   // 0-255, 255=always on, 128=50% etc
+static uint32_t _swTimer     = 0;
+#define SW_PWM_PERIOD_MS      20       // 20ms period = 50Hz software PWM
+
 static void srWrite(uint8_t data) {
     PORTB &= ~(1 << PB6);
-
     for (int8_t i = 7; i >= 0; i--) {
         PORTG &= ~(1 << PG5);
         if (data & (1 << i))
@@ -42,39 +45,60 @@ static void srWrite(uint8_t data) {
             PORTH &= ~(1 << PH5);
         PORTG |= (1 << PG5);
     }
-
     PORTB |= (1 << PB6);
 }
 
 void motorsInit(void) {
-    // Shift register control pins
-    DDRG |= (1 << PG5);    // D4  CLK
-    DDRH |= (1 << PH4);    // D7  OE
-    DDRH |= (1 << PH5);    // D8  DATA
-    DDRB |= (1 << PB6);    // D12 LATCH
+    DDRG |= (1 << PG5);
+    DDRH |= (1 << PH4);
+    DDRH |= (1 << PH5);
+    DDRB |= (1 << PB6);
 
-    // OE active LOW — enable shift register outputs
-    PORTH &= ~(1 << PH4);
+    PORTH &= ~(1 << PH4);  // OE active LOW
 
-    // Motor enable pins — D9 and D10 on MH Electronics shield
-    // On Mega: D9 = PH6 = OC2B, D10 = PB4 = OC2A
-    DDRH |= (1 << PH6);    // D9  OC2B — enable for M1/M2
-    DDRB |= (1 << PB4);    // D10 OC2A — enable for M3/M4
-
-    // Timer2: Fast PWM 8-bit, non-inverting on OC2A and OC2B
-    // prescaler 64 -> 16MHz / 64 / 256 = 976Hz
-    TCCR2A = (1 << COM2A1) | (1 << COM2B1)
-           | (1 << WGM21)  | (1 << WGM20);
-    TCCR2B = (1 << CS22);   // prescaler 64
-    OCR2A  = 0;              // D10 — M3/M4 enable, start at 0
-    OCR2B  = 0;              // D9  — M1/M2 enable, start at 0
+    // These pins not used for speed on this shield
+    // but set as outputs to avoid floating
+    DDRB |= (1 << PB5);    // D11
+    DDRE |= (1 << PE5);    // D3
+    OCR1A = 0;
+    OCR3C = 0;
 
     srWrite(0x00);
 }
 
+// Call this every loop() iteration to maintain software PWM
+void updateMotorPWM(void) {
+    if (_currentSr == 0x00) return;  // stopped — nothing to do
+    if (_swDuty == 255) {
+        srWrite(_currentSr);         // full speed — always on
+        return;
+    }
+
+    uint32_t now     = (uint32_t)millis();
+    uint32_t elapsed = now - _swTimer;
+
+    if (elapsed >= (uint32_t)SW_PWM_PERIOD_MS) {
+        _swTimer = now;
+        elapsed  = 0;
+    }
+
+    // ON time within the period proportional to duty cycle
+    uint32_t onTime = (uint32_t)(SW_PWM_PERIOD_MS * _swDuty / 255);
+
+    if (elapsed < onTime) {
+        srWrite(_currentSr);   // ON phase — motors running
+    } else {
+        srWrite(0x00);         // OFF phase — motors coasting
+    }
+}
+
+void setMotorSpeed(uint8_t duty) {
+    _swDuty  = duty;
+    _swTimer = 0;
+}
+
 void move(int speed, int direction) {
-    uint8_t sr  = 0x00;
-    uint8_t pwm = (uint8_t)speed;
+    uint8_t sr = 0x00;
 
     switch (direction) {
         case GO:
@@ -91,18 +115,21 @@ void move(int speed, int direction) {
             break;
         case STOP_DIR:
         default:
-            sr  = 0x00;
-            pwm = 0;
+            sr = 0x00;
             break;
     }
 
+    _currentSr = sr;
+    setMotorSpeed((uint8_t)speed);
     srWrite(sr);
-    OCR2A = pwm;    // D10 — controls M3/M4 (left side)
-    OCR2B = pwm;    // D9  — controls M1/M2 (right side)
 }
 
 void forward(int speed)  { move(speed, GO);      }
 void backward(int speed) { move(speed, BACK);     }
 void ccw(int speed)      { move(speed, CCW);      }
 void cw(int speed)       { move(speed, CW);       }
-void stop(void)          { move(0,     STOP_DIR); }
+void stop(void)          {
+    _currentSr = 0x00;
+    _swDuty    = 0;
+    srWrite(0x00);
+}
