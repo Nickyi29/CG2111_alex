@@ -317,17 +317,18 @@ static void handleCommand(const TPacket *cmd) {
             cw(motorSpeed);
             break;
 
-        case COMMAND_SPEED: {
-            int delta    = (cmd->params[0] == 1) ? SPEED_STEP : -SPEED_STEP;
-            int newSpeed = (int)motorSpeed + delta;
-            if (newSpeed < SPEED_MIN) newSpeed = SPEED_MIN;
-            if (newSpeed > SPEED_MAX) newSpeed = SPEED_MAX;
-            motorSpeed = (uint8_t)newSpeed;
-            if (buttonState != STATE_STOPPED && currentDir != DIR_STOP)
-                move(motorSpeed, currentDir);
-            sendResponse(RESP_OK, motorSpeed);
-            break;
-        }
+case COMMAND_SPEED: {
+    int delta    = (cmd->params[0] == 1) ? SPEED_STEP : -SPEED_STEP;
+    int newSpeed = (int)motorSpeed + delta;
+    if (newSpeed < SPEED_MIN) newSpeed = SPEED_MIN;
+    if (newSpeed > SPEED_MAX) newSpeed = SPEED_MAX;
+    motorSpeed = (uint8_t)newSpeed;
+    setMotorSpeed(motorSpeed);     // ← ADD THIS
+    if (buttonState != STATE_STOPPED && currentDir != DIR_STOP)
+        move(motorSpeed, currentDir);
+    sendResponse(RESP_OK, motorSpeed);
+    break;
+}
 
         case COMMAND_STOP:
             if (buttonState == STATE_STOPPED) { sendStatus(STATE_STOPPED); break; }
@@ -436,7 +437,7 @@ void loop(void) {
         sendStatus(STATE_RUNNING);
         startupBroadcastDone = true;
     }
-
+    updateMotorPWM();
     processMovement();
 
     if (stateChanged) {
