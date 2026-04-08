@@ -50,7 +50,7 @@ volatile unsigned int servoTicks[4]   = {3000, 3000, 3000, 2111};
 
 #define SPEED_MIN     30
 #define SPEED_MAX     255
-#define SPEED_DEFAULT 180
+#define SPEED_DEFAULT 150
 #define SPEED_STEP    50
 
 // =============================================================
