@@ -262,7 +262,7 @@ def _handleInput(line: str, client: TCPClient):
 
         elif joint == 's':
             if not (10 <= deg <= 170):
-                print(f'[second_terminal] Shoulder out of range (10-170): {deg}')
+                print(f'[second_terminal] Shoulder out of range (10-200): {deg}')
                 return
             # Slow speed for shoulder
             frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SPEED, params=[5])
@@ -271,7 +271,7 @@ def _handleInput(line: str, client: TCPClient):
 
         elif joint == 'e':
             if not (10 <= deg <= 170):
-                print(f'[second_terminal] Elbow out of range (10-170): {deg}')
+                print(f'[second_terminal] Elbow out of range (10-200): {deg}')
                 return
             _sendArm(client, COMMAND_ARM_ELBOW, deg, 'ELBOW')
 
