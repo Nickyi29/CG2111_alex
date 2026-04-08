@@ -2,28 +2,11 @@
  * robotlib.ino
  * CG2111A — Alex Robot
  *
- * Bare-metal DC motor driver derived directly from the original AFMotor code.
- *
- * Physical motor mapping (from original AFMotor code):
- *   M1 shield terminal = FRONT RIGHT
- *   M2 shield terminal = BACK RIGHT
- *   M3 shield terminal = BACK LEFT
- *   M4 shield terminal = FRONT LEFT
- *
- * AFMotor 74HC595 bit assignments:
- *   M1: IN1=0x04, IN2=0x08  FORWARD=0x08, BACKWARD=0x04
- *   M2: IN1=0x02, IN2=0x01  FORWARD=0x01, BACKWARD=0x02
- *   M3: IN1=0x40, IN2=0x80  FORWARD=0x40, BACKWARD=0x80
- *   M4: IN1=0x20, IN2=0x10  FORWARD=0x10, BACKWARD=0x20
- *
- * IMPORTANT — back motors are mounted in reverse on the chassis:
- *   Robot FORWARD = FL(M4) FWD + FR(M1) FWD + BL(M3) BWD + BR(M2) BWD
- *
- * Shift register byte values per direction:
- *   GO   = 0x10|0x08|0x80|0x02 = 0x9A
- *   BACK = 0x20|0x04|0x40|0x01 = 0x65
- *   CW   = 0x20|0x08|0x40|0x02 = 0x6A
- *   CCW  = 0x10|0x04|0x80|0x01 = 0x95
+ * CRITICAL FIX: MH Electronics shield uses D9/D10 for motor enable pins.
+ * Shield designed for Uno where D9=OC1A, D10=OC1B.
+ * On Mega: D9=PH6=OC2B, D10=PB4=OC2A — both on Timer2.
+ * Previous code used D11(OC1A) and D3(OC3C) — wrong pins, enables floated HIGH.
+ * Now using Timer2 on D9/D10 — speed control works on ALL motors.
  */
 
 #define STOP_DIR 0
@@ -33,32 +16,30 @@
 #define CW       4
 
 // FRONT LEFT  = M4 shield terminal
-#define FL_FWD (1 << 0)   // 0x01  ← unchanged
-#define FL_BWD (1 << 6)   // 0x40  ← unchanged
+#define FL_FWD (1 << 0)   // 0x01
+#define FL_BWD (1 << 6)   // 0x40
 
 // FRONT RIGHT = M1 shield terminal
-#define FR_FWD (1 << 2)   // 0x04  ← unchanged
-#define FR_BWD (1 << 3)   // 0x08  ← unchanged
+#define FR_FWD (1 << 2)   // 0x04
+#define FR_BWD (1 << 3)   // 0x08
 
 // BACK LEFT   = M3 shield terminal (mounted in reverse)
-#define BL_FWD (1 << 5)   // 0x20  ← was (1<<7) SWAPPED
-#define BL_BWD (1 << 7)   // 0x80  ← was (1<<5) SWAPPED
+#define BL_FWD (1 << 5)   // 0x20
+#define BL_BWD (1 << 7)   // 0x80
 
 // BACK RIGHT  = M2 shield terminal (mounted in reverse)
-#define BR_FWD (1 << 1)   // 0x02  ← was (1<<4) SWAPPED
-#define BR_BWD (1 << 4)   // 0x10  ← was (1<<1) SWAPPED
+#define BR_FWD (1 << 1)   // 0x02
+#define BR_BWD (1 << 4)   // 0x10
 
 static void srWrite(uint8_t data) {
     PORTB &= ~(1 << PB6);
 
     for (int8_t i = 7; i >= 0; i--) {
         PORTG &= ~(1 << PG5);
-
         if (data & (1 << i))
             PORTH |=  (1 << PH5);
         else
             PORTH &= ~(1 << PH5);
-
         PORTG |= (1 << PG5);
     }
 
@@ -66,47 +47,29 @@ static void srWrite(uint8_t data) {
 }
 
 void motorsInit(void) {
+    // Shift register control pins
     DDRG |= (1 << PG5);    // D4  CLK
     DDRH |= (1 << PH4);    // D7  OE
     DDRH |= (1 << PH5);    // D8  DATA
     DDRB |= (1 << PB6);    // D12 LATCH
 
-    PORTH &= ~(1 << PH4);  // OE active LOW
+    // OE active LOW — enable shift register outputs
+    PORTH &= ~(1 << PH4);
 
-    DDRB |= (1 << PB5);    // D11 OC1A
-    DDRE |= (1 << PE5);    // D3  OC3C
+    // Motor enable pins — D9 and D10 on MH Electronics shield
+    // On Mega: D9 = PH6 = OC2B, D10 = PB4 = OC2A
+    DDRH |= (1 << PH6);    // D9  OC2B — enable for M1/M2
+    DDRB |= (1 << PB4);    // D10 OC2A — enable for M3/M4
 
-    // Timer 1 — ORIGINAL, DO NOT TOUCH
-    TCCR1A = (1 << COM1A1) | (1 << WGM10);
-    TCCR1B = (1 << WGM12)  | (1 << CS11) | (1 << CS10);
-    OCR1A  = 0;
-
-    // Timer 3 — ORIGINAL, DO NOT TOUCH
-    TCCR3A = (1 << COM3C1) | (1 << WGM30);
-    TCCR3B = (1 << WGM32)  | (1 << CS31) | (1 << CS30);
-    OCR3C  = 0;
+    // Timer2: Fast PWM 8-bit, non-inverting on OC2A and OC2B
+    // prescaler 64 -> 16MHz / 64 / 256 = 976Hz
+    TCCR2A = (1 << COM2A1) | (1 << COM2B1)
+           | (1 << WGM21)  | (1 << WGM20);
+    TCCR2B = (1 << CS22);   // prescaler 64
+    OCR2A  = 0;              // D10 — M3/M4 enable, start at 0
+    OCR2B  = 0;              // D9  — M1/M2 enable, start at 0
 
     srWrite(0x00);
-}
-
-void testMotors(void) {
-    uint8_t testBits[] = {
-        0x01, 0x02, 0x04, 0x08,
-        0x10, 0x20, 0x40, 0x80
-    };
-
-    delay(3000);  // 3 seconds to put robot down
-
-    for (int i = 0; i < 8; i++) {
-        OCR1A = 150;
-        OCR3C = 150;
-        srWrite(testBits[i]);
-        delay(2000);       // spin 2 seconds — note which motor and direction
-        srWrite(0x00);
-        OCR1A = 0;
-        OCR3C = 0;
-        delay(1000);       // 1 second pause between bits
-    }
 }
 
 void move(int speed, int direction) {
@@ -115,19 +78,15 @@ void move(int speed, int direction) {
 
     switch (direction) {
         case GO:
-            // FL FWD + FR FWD + BL BWD + BR BWD = 0x9A
             sr = FL_FWD | FR_FWD | BL_BWD | BR_BWD;
             break;
         case BACK:
-            // FL BWD + FR BWD + BL FWD + BR FWD = 0x65
             sr = FL_BWD | FR_BWD | BL_FWD | BR_FWD;
             break;
         case CW:
-            // Right turn: left wheels fwd, right wheels bwd = 0x6A
             sr = FL_BWD | FR_FWD | BL_FWD | BR_BWD;
             break;
         case CCW:
-            // Left turn: right wheels fwd, left wheels bwd = 0x95
             sr = FL_FWD | FR_BWD | BL_BWD | BR_FWD;
             break;
         case STOP_DIR:
@@ -138,8 +97,8 @@ void move(int speed, int direction) {
     }
 
     srWrite(sr);
-    OCR1A = pwm;
-    OCR3C = pwm;
+    OCR2A = pwm;    // D10 — controls M3/M4 (left side)
+    OCR2B = pwm;    // D9  — controls M1/M2 (right side)
 }
 
 void forward(int speed)  { move(speed, GO);      }
