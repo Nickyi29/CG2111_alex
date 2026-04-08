@@ -1,10 +1,6 @@
 /*
  * robotlib.ino
  * CG2111A — Alex Robot
- *
- * Speed control via software PWM on shift register direction bits.
- * All L293D enables are hardwired HIGH on this shield.
- * Speed is controlled by toggling direction bits ON/OFF at a duty cycle.
  */
 
 #define STOP_DIR 0
@@ -13,27 +9,19 @@
 #define CCW      3
 #define CW       4
 
-// FRONT LEFT  = M4 shield terminal
-#define FL_FWD (1 << 0)   // 0x01
-#define FL_BWD (1 << 6)   // 0x40
+#define FL_FWD (1 << 0)
+#define FL_BWD (1 << 6)
+#define FR_FWD (1 << 2)
+#define FR_BWD (1 << 3)
+#define BL_FWD (1 << 5)
+#define BL_BWD (1 << 7)
+#define BR_FWD (1 << 1)
+#define BR_BWD (1 << 4)
 
-// FRONT RIGHT = M1 shield terminal
-#define FR_FWD (1 << 2)   // 0x04
-#define FR_BWD (1 << 3)   // 0x08
-
-// BACK LEFT   = M3 shield terminal (mounted in reverse)
-#define BL_FWD (1 << 5)   // 0x20
-#define BL_BWD (1 << 7)   // 0x80
-
-// BACK RIGHT  = M2 shield terminal (mounted in reverse)
-#define BR_FWD (1 << 1)   // 0x02
-#define BR_BWD (1 << 4)   // 0x10
-
-// Software PWM state
-static uint8_t  _currentSr   = 0x00;  // current direction byte
-static uint8_t  _swDuty      = 255;   // 0-255, 255=always on, 128=50% etc
-static uint32_t _swTimer     = 0;
-#define SW_PWM_PERIOD_MS      20       // 20ms period = 50Hz software PWM
+static uint8_t  _currentSr       = 0x00;
+static uint8_t  _swDuty          = 255;
+static uint32_t _swTimer         = 0;
+#define SW_PWM_PERIOD_MS            20
 
 static void srWrite(uint8_t data) {
     PORTB &= ~(1 << PB6);
@@ -54,22 +42,26 @@ void motorsInit(void) {
     DDRH |= (1 << PH5);
     DDRB |= (1 << PB6);
 
-    PORTH &= ~(1 << PH4);  // OE active LOW
+    PORTH &= ~(1 << PH4);
 
-    // These pins not used for speed on this shield
-    // but set as outputs to avoid floating
-    DDRB |= (1 << PB5);    // D11
-    DDRE |= (1 << PE5);    // D3
-OCR1A = 255;   // was 0 — right side enable, must be HIGH
-OCR3C = 255;   // was 0 — set high too
+    DDRB |= (1 << PB5);
+    DDRE |= (1 << PE5);
+
+    TCCR1A = (1 << COM1A1) | (1 << WGM10);
+    TCCR1B = (1 << WGM12)  | (1 << CS11) | (1 << CS10);
+    OCR1A  = 255;
+
+    TCCR3A = (1 << COM3C1) | (1 << WGM30);
+    TCCR3B = (1 << WGM32)  | (1 << CS31) | (1 << CS30);
+    OCR3C  = 255;
+
     srWrite(0x00);
 }
 
-// Call this every loop() iteration to maintain software PWM
 void updateMotorPWM(void) {
-    if (_currentSr == 0x00) return;  // stopped — nothing to do
+    if (_currentSr == 0x00) return;
     if (_swDuty == 255) {
-        srWrite(_currentSr);         // full speed — always on
+        srWrite(_currentSr);
         return;
     }
 
@@ -81,13 +73,12 @@ void updateMotorPWM(void) {
         elapsed  = 0;
     }
 
-    // ON time within the period proportional to duty cycle
     uint32_t onTime = (uint32_t)(SW_PWM_PERIOD_MS * _swDuty / 255);
 
     if (elapsed < onTime) {
-        srWrite(_currentSr);   // ON phase — motors running
+        srWrite(_currentSr);
     } else {
-        srWrite(0x00);         // OFF phase — motors coasting
+        srWrite(0x00);
     }
 }
 
