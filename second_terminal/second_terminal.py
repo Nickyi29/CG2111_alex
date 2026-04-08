@@ -340,7 +340,7 @@ def _handleInput(line: str, client: TCPClient):
         _waiting_for_ack = True
 
     elif line == 'm':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[125])
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[110])
         sendTPacketFrame(client.sock, frame)
         print('[second_terminal] Sent: GRIPPER CLOSE -> 80 deg')
         _waiting_for_ack = True
