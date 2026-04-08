@@ -262,13 +262,13 @@ def _handleInput(line: str, client: TCPClient):
 
     # ---- BASE ----
     elif line == 'j':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_BASE, params=[60])
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_BASE, params=[45])
         sendTPacketFrame(client.sock, frame)
         print('[second_terminal] Sent: BASE LEFT -> 60 deg')
         _waiting_for_ack = True
 
     elif line == 'r':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_BASE, params=[120])
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_BASE, params=[135])
         sendTPacketFrame(client.sock, frame)
         print('[second_terminal] Sent: BASE RIGHT -> 120 deg')
         _waiting_for_ack = True
@@ -340,7 +340,7 @@ def _handleInput(line: str, client: TCPClient):
         _waiting_for_ack = True
 
     elif line == 'm':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[140])
+        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_GRIPPER, params=[125])
         sendTPacketFrame(client.sock, frame)
         print('[second_terminal] Sent: GRIPPER CLOSE -> 80 deg')
         _waiting_for_ack = True
