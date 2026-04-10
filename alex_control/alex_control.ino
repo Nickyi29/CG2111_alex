@@ -384,7 +384,7 @@ case COMMAND_SPEED: {
 
 void setup(void) {
 #if USE_BAREMETAL_SERIAL
-    usartInit(8);
+    usartInit(16);   // ← was 8, now 16 with U2X=1 for accurate 115200 baud
 #else
     Serial.begin(115200);
 #endif
