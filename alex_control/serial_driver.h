@@ -2,7 +2,10 @@
  * serial_driver.h
  * CG2111A — Alex Robot
  *
- * Serial transport layer and packet framing.
+ * CHANGES FOR BARE METAL:
+ *   USE_BAREMETAL_SERIAL = 1
+ *   Fixed baud rate: UBRR=16 with U2X0=1 -> 117647 baud (2.1% error, within AVR tolerance)
+ *   TX buffer increased from 128 to 256 bytes to hold 2 full frames safely
  */
 
 #pragma once
@@ -12,13 +15,11 @@
 #include <string.h>
 #include "packets.h"
 
-// 0 = use Arduino Serial (default)
-// 1 = use bare-metal USART0 circular buffers
-#define USE_BAREMETAL_SERIAL 0
+#define USE_BAREMETAL_SERIAL 1   // ← changed from 0
 
 #if USE_BAREMETAL_SERIAL
 
-#define TX_BUFFER_SIZE 128
+#define TX_BUFFER_SIZE 256       // ← increased from 128, holds 2 full frames
 #define TX_BUFFER_MASK (TX_BUFFER_SIZE - 1)
 #define RX_BUFFER_SIZE 256
 #define RX_BUFFER_MASK (RX_BUFFER_SIZE - 1)
@@ -38,11 +39,14 @@ static inline uint8_t rxUsed(void) {
 }
 
 void usartInit(uint16_t ubrr) {
+    // Use double-speed mode (U2X0=1) for better accuracy at 115200 baud
+    // With U2X0=1 and UBRR=16: baud = 16MHz / (8 * 17) = 117647 (2.1% error)
+    // This is within AVR's ±2.5% tolerance
     UBRR0H = (uint8_t)(ubrr >> 8);
     UBRR0L = (uint8_t)(ubrr);
-    UCSR0A = 0;
+    UCSR0A = (1 << U2X0);                              // ← double speed mode
     UCSR0B = (1 << TXEN0) | (1 << RXEN0) | (1 << RXCIE0);
-    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);            // 8-bit, no parity, 1 stop
 }
 
 bool txEnqueue(const uint8_t *data, uint8_t len) {
@@ -56,13 +60,13 @@ bool txEnqueue(const uint8_t *data, uint8_t len) {
         head = (head + 1) & TX_BUFFER_MASK;
     }
     tx_head = head;
-    UCSR0B |= (1 << UDRIE0);
+    UCSR0B |= (1 << UDRIE0);   // enable TX empty interrupt
     return true;
 }
 
 ISR(USART0_UDRE_vect) {
     if (tx_head == tx_tail) {
-        UCSR0B &= ~(1 << UDRIE0);
+        UCSR0B &= ~(1 << UDRIE0);  // buffer empty — disable interrupt
         return;
     }
     UDR0    = tx_buf[tx_tail];
@@ -85,10 +89,11 @@ bool rxDequeue(uint8_t *data, uint8_t len) {
 ISR(USART0_RX_vect) {
     uint8_t byte = UDR0;
     uint8_t next = (rx_head + 1) & RX_BUFFER_MASK;
-    if (next != rx_tail) {
+    if (next != rx_tail) {   // only store if buffer not full
         rx_buf[rx_head] = byte;
         rx_head = next;
     }
+    // if full, byte is silently dropped — RX buffer is 256 bytes so this is rare
 }
 
 #endif  // USE_BAREMETAL_SERIAL
@@ -107,7 +112,7 @@ static void sendFrame(const TPacket *pkt) {
     frame[2 + TPACKET_SIZE] = computeChecksum((const uint8_t *)pkt, TPACKET_SIZE);
 
 #if USE_BAREMETAL_SERIAL
-    while (!txEnqueue(frame, FRAME_SIZE)) { }
+    while (!txEnqueue(frame, FRAME_SIZE)) { }  // busy wait if buffer full
 #else
     Serial.write(frame, FRAME_SIZE);
 #endif
@@ -131,6 +136,7 @@ static bool receiveFrame(TPacket *pkt) {
                 return true;
             }
         }
+        // Magic bytes not found or checksum failed — advance one byte
         rx_tail = (rx_tail + 1) & RX_BUFFER_MASK;
     }
     return false;
