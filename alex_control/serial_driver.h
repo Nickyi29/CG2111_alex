@@ -1,11 +1,6 @@
 /*
  * serial_driver.h
  * CG2111A — Alex Robot
- *
- * CHANGES FOR BARE METAL:
- *   USE_BAREMETAL_SERIAL = 1
- *   Fixed baud rate: UBRR=16 with U2X0=1 -> 117647 baud (2.1% error, within AVR tolerance)
- *   TX buffer increased from 128 to 256 bytes to hold 2 full frames safely
  */
 
 #pragma once
