@@ -15,11 +15,11 @@
 #include <string.h>
 #include "packets.h"
 
-#define USE_BAREMETAL_SERIAL 1   // ← changed from 0
+#define USE_BAREMETAL_SERIAL 1   
 
 #if USE_BAREMETAL_SERIAL
 
-#define TX_BUFFER_SIZE 256       // ← increased from 128, holds 2 full frames
+#define TX_BUFFER_SIZE 256       
 #define TX_BUFFER_MASK (TX_BUFFER_SIZE - 1)
 #define RX_BUFFER_SIZE 256
 #define RX_BUFFER_MASK (RX_BUFFER_SIZE - 1)
@@ -39,14 +39,12 @@ static inline uint8_t rxUsed(void) {
 }
 
 void usartInit(uint16_t ubrr) {
-    // Use double-speed mode (U2X0=1) for better accuracy at 115200 baud
-    // With U2X0=1 and UBRR=16: baud = 16MHz / (8 * 17) = 117647 (2.1% error)
-    // This is within AVR's ±2.5% tolerance
+    
     UBRR0H = (uint8_t)(ubrr >> 8);
     UBRR0L = (uint8_t)(ubrr);
-    UCSR0A = (1 << U2X0);                              // ← double speed mode
+    UCSR0A = (1 << U2X0);                             
     UCSR0B = (1 << TXEN0) | (1 << RXEN0) | (1 << RXCIE0);
-    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);            // 8-bit, no parity, 1 stop
+    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);           
 }
 
 bool txEnqueue(const uint8_t *data, uint8_t len) {
@@ -66,7 +64,7 @@ bool txEnqueue(const uint8_t *data, uint8_t len) {
 
 ISR(USART0_UDRE_vect) {
     if (tx_head == tx_tail) {
-        UCSR0B &= ~(1 << UDRIE0);  // buffer empty — disable interrupt
+        UCSR0B &= ~(1 << UDRIE0);  
         return;
     }
     UDR0    = tx_buf[tx_tail];
@@ -89,14 +87,13 @@ bool rxDequeue(uint8_t *data, uint8_t len) {
 ISR(USART0_RX_vect) {
     uint8_t byte = UDR0;
     uint8_t next = (rx_head + 1) & RX_BUFFER_MASK;
-    if (next != rx_tail) {   // only store if buffer not full
+    if (next != rx_tail) {  
         rx_buf[rx_head] = byte;
         rx_head = next;
     }
-    // if full, byte is silently dropped — RX buffer is 256 bytes so this is rare
 }
 
-#endif  // USE_BAREMETAL_SERIAL
+#endif 
 
 static uint8_t computeChecksum(const uint8_t *data, uint8_t len) {
     uint8_t cs = 0;
@@ -136,7 +133,6 @@ static bool receiveFrame(TPacket *pkt) {
                 return true;
             }
         }
-        // Magic bytes not found or checksum failed — advance one byte
         rx_tail = (rx_tail + 1) & RX_BUFFER_MASK;
     }
     return false;
