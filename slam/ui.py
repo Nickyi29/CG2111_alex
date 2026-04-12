@@ -2,20 +2,23 @@
 """
 ui.py - Terminal map viewer using the Textual framework.
 
-Displays the BreezySLAM occupancy map as a colour Unicode block-character
-grid in the terminal. The map updates in real time as the robot moves.
+IMPROVEMENTS:
+  - Robot body outline drawn around LIDAR centre using rotated rectangle.
+  - Breadcrumb trail confirmed working — press 't' to toggle.
+  - Robot body uses box-drawing characters (┌┐└┘─│) for edges,
+    light shade (░) for interior. Drawn in bright_yellow.
+  - LIDAR centre arrow still drawn on top of body outline.
 
-Keyboard controls
------------------
-+ / = Zoom in
-- / _ Zoom out
-1-5 Jump directly to zoom levels
-arrows / h j k l Pan
-c Re-centre
-p Pause / resume SLAM updates
-t Toggle path breadcrumb trail
-s Save map + path to disk
-q Quit
+Keyboard controls:
+  + / =   Zoom in
+  - / _   Zoom out
+  1-5     Jump to zoom level
+  arrows / hjkl  Pan
+  c       Re-centre on robot
+  p       Pause / resume SLAM
+  t       Toggle breadcrumb trail
+  s       Save map + path to disk
+  q       Quit
 """
 
 from __future__ import annotations
@@ -44,11 +47,13 @@ from slam_process import run_slam_process
 from renderer import (
     _VIS_TABLE,
     _STYLE_ROBOT,
+    _STYLE_ROBOT_BODY,
     _STYLE_PATH,
     _GLYPH_PATH,
     mm_to_map_px,
     pan_step_mm,
     robot_glyph,
+    robot_body_cells,
     render_map_numpy,
     path_display_coords,
 )
@@ -62,12 +67,10 @@ class SlamApp(App[None]):
         background: #101418;
         color: white;
     }
-
     #root {
         height: 1fr;
         padding: 0 0;
     }
-
     #header {
         height: auto;
         content-align: left middle;
@@ -76,56 +79,52 @@ class SlamApp(App[None]):
         padding: 0 1;
         text-style: bold;
     }
-
     #map {
         height: 1fr;
         padding: 0 0;
         content-align: center middle;
         background: #0b0f14;
     }
-
     #status {
         height: auto;
         color: white;
         background: #182028;
         padding: 0 1;
     }
-
     #help {
         height: auto;
         color: #b8c4cf;
         background: #141b22;
         padding: 0 1;
     }
-
     Footer {
         background: #1d2630;
     }
     """
 
     BINDINGS = [
-        Binding('+', 'zoom_in', 'Zoom In'),
-        Binding('=', 'zoom_in', 'Zoom In', show=False),
-        Binding('-', 'zoom_out', 'Zoom Out'),
-        Binding('_', 'zoom_out', 'Zoom Out', show=False),
-        Binding('1', 'set_zoom(0)', 'Zoom 1', show=False),
-        Binding('2', 'set_zoom(1)', 'Zoom 2', show=False),
-        Binding('3', 'set_zoom(2)', 'Zoom 3', show=False),
-        Binding('4', 'set_zoom(3)', 'Zoom 4', show=False),
-        Binding('5', 'set_zoom(4)', 'Zoom 5', show=False),
-        Binding('left', 'pan_left', 'Pan Left', show=False),
-        Binding('h', 'pan_left', 'Pan Left', show=False),
-        Binding('right', 'pan_right', 'Pan Right', show=False),
-        Binding('l', 'pan_right', 'Pan Right', show=False),
-        Binding('up', 'pan_up', 'Pan Up', show=False),
-        Binding('k', 'pan_up', 'Pan Up', show=False),
-        Binding('down', 'pan_down', 'Pan Down', show=False),
-        Binding('j', 'pan_down', 'Pan Down', show=False),
-        Binding('c', 'center', 'Center'),
-        Binding('p', 'pause_toggle', 'Pause'),
-        Binding('t', 'path_toggle', 'Path'),
-        Binding('s', 'save_map', 'Save'),
-        Binding('q', 'quit', 'Quit'),
+        Binding('+',     'zoom_in',      'Zoom In'),
+        Binding('=',     'zoom_in',      'Zoom In',   show=False),
+        Binding('-',     'zoom_out',     'Zoom Out'),
+        Binding('_',     'zoom_out',     'Zoom Out',  show=False),
+        Binding('1',     'set_zoom(0)',  'Zoom 1',    show=False),
+        Binding('2',     'set_zoom(1)',  'Zoom 2',    show=False),
+        Binding('3',     'set_zoom(2)',  'Zoom 3',    show=False),
+        Binding('4',     'set_zoom(3)',  'Zoom 4',    show=False),
+        Binding('5',     'set_zoom(4)',  'Zoom 5',    show=False),
+        Binding('left',  'pan_left',     'Pan Left',  show=False),
+        Binding('h',     'pan_left',     'Pan Left',  show=False),
+        Binding('right', 'pan_right',    'Pan Right', show=False),
+        Binding('l',     'pan_right',    'Pan Right', show=False),
+        Binding('up',    'pan_up',       'Pan Up',    show=False),
+        Binding('k',     'pan_up',       'Pan Up',    show=False),
+        Binding('down',  'pan_down',     'Pan Down',  show=False),
+        Binding('j',     'pan_down',     'Pan Down',  show=False),
+        Binding('c',     'center',       'Center'),
+        Binding('p',     'pause_toggle', 'Pause'),
+        Binding('t',     'path_toggle',  'Path'),
+        Binding('s',     'save_map',     'Save'),
+        Binding('q',     'quit',         'Quit'),
     ]
 
     def __init__(self) -> None:
@@ -137,14 +136,13 @@ class SlamApp(App[None]):
             name='slam-process',
             daemon=True,
         )
-
-        self.zoom_idx = DEFAULT_ZOOM
-        self.pan_x_mm = 0.0
-        self.pan_y_mm = 0.0
+        self.zoom_idx   = DEFAULT_ZOOM
+        self.pan_x_mm   = 0.0
+        self.pan_y_mm   = 0.0
         self._last_render_key: tuple = ()
         self._cached_robot_visible = False
-        self._show_path: bool = True
-        self._save_msg: str = ''
+        self._show_path: bool = True    # breadcrumbs ON by default
+        self._save_msg: str  = ''
 
     def compose(self) -> ComposeResult:
         with Vertical(id='root'):
@@ -187,20 +185,11 @@ class SlamApp(App[None]):
         if ZOOM_HALF_M[self.zoom_idx] is None:
             self.pan_x_mm = self.pan_y_mm = 0.0
 
-    def action_pan_left(self) -> None:
-        self.pan_y_mm += pan_step_mm(self.zoom_idx)
-
-    def action_pan_right(self) -> None:
-        self.pan_y_mm -= pan_step_mm(self.zoom_idx)
-
-    def action_pan_up(self) -> None:
-        self.pan_x_mm += pan_step_mm(self.zoom_idx)
-
-    def action_pan_down(self) -> None:
-        self.pan_x_mm -= pan_step_mm(self.zoom_idx)
-
-    def action_center(self) -> None:
-        self.pan_x_mm = self.pan_y_mm = 0.0
+    def action_pan_left(self)  -> None: self.pan_y_mm += pan_step_mm(self.zoom_idx)
+    def action_pan_right(self) -> None: self.pan_y_mm -= pan_step_mm(self.zoom_idx)
+    def action_pan_up(self)    -> None: self.pan_x_mm += pan_step_mm(self.zoom_idx)
+    def action_pan_down(self)  -> None: self.pan_x_mm -= pan_step_mm(self.zoom_idx)
+    def action_center(self)    -> None: self.pan_x_mm = self.pan_y_mm = 0.0
 
     def action_pause_toggle(self) -> None:
         self.pss.paused.value = not self.pss.paused.value
@@ -210,30 +199,22 @@ class SlamApp(App[None]):
         self._last_render_key = ()
 
     def action_save_map(self) -> None:
-        """Save the current occupancy map and path to timestamped .npy files."""
         try:
             snap = self._snapshot()
-            ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-
+            ts   = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
             map_arr = np.frombuffer(
-                snap['mapbytes'],
-                dtype=np.uint8,
+                snap['mapbytes'], dtype=np.uint8,
             ).reshape(MAP_SIZE_PIXELS, MAP_SIZE_PIXELS).copy()
-
             map_path = f'slam_map_{ts}.npy'
             np.save(map_path, map_arr)
-
-            path_pts = snap.get('path', [])
             msg_parts = [f'map->{map_path}']
-
+            path_pts = snap.get('path', [])
             if path_pts:
-                path_arr = np.array(path_pts, dtype=np.float64)
+                path_arr  = np.array(path_pts, dtype=np.float64)
                 path_path = f'slam_path_{ts}.npy'
                 np.save(path_path, path_arr)
                 msg_parts.append(f'path->{path_path} ({len(path_pts)} pts)')
-
             self._save_msg = ' | saved: ' + ', '.join(msg_parts)
-
         except Exception as exc:
             self._save_msg = f' | save FAILED: {exc}'
 
@@ -242,26 +223,26 @@ class SlamApp(App[None]):
         self.exit()
 
     # -----------------------------------------------------------------------
-    # Read a snapshot from shared memory
+    # Snapshot
     # -----------------------------------------------------------------------
 
     def _snapshot(self) -> dict:
         error = self.pss.get_error()
         return {
-            'mapbytes': bytes(self.pss.shm.buf),
-            'x_mm': self.pss.x_mm.value,
-            'y_mm': self.pss.y_mm.value,
-            'theta_deg': self.pss.theta_deg.value,
-            'valid_points': self.pss.valid_points.value,
+            'mapbytes':    bytes(self.pss.shm.buf),
+            'x_mm':        self.pss.x_mm.value,
+            'y_mm':        self.pss.y_mm.value,
+            'theta_deg':   self.pss.theta_deg.value,
+            'valid_points':self.pss.valid_points.value,
             'status_note': self.pss.get_status(),
             'rounds_seen': self.pss.rounds_seen.value,
             'map_version': self.pss.map_version.value,
-            'pose_version': self.pss.pose_version.value,
-            'connected': self.pss.connected.value,
-            'paused': self.pss.paused.value,
-            'stopped': self.pss.stopped.value,
+            'pose_version':self.pss.pose_version.value,
+            'connected':   self.pss.connected.value,
+            'paused':      self.pss.paused.value,
+            'stopped':     self.pss.stopped.value,
             'error_message': error if error else None,
-            'path': self.pss.get_path_snapshot(),
+            'path':        self.pss.get_path_snapshot(),
         }
 
     # -----------------------------------------------------------------------
@@ -271,20 +252,22 @@ class SlamApp(App[None]):
     def _render_map_text(self, snapshot: dict) -> tuple[Text, bool]:
         try:
             map_widget = self.query_one('#map', Static)
-            region = map_widget.content_region
+            region     = map_widget.content_region
         except Exception:
             return Text(), False
 
-        disp_cols = max(20, min(region.width, MAX_RENDER_COLS))
-        disp_rows = max(8, min(region.height, MAX_RENDER_ROWS))
+        disp_cols = max(20, min(region.width,  MAX_RENDER_COLS))
+        disp_rows = max(8,  min(region.height, MAX_RENDER_ROWS))
 
-        mapbytes = snapshot['mapbytes']
+        mapbytes   = snapshot['mapbytes']
         robot_x_mm = snapshot['x_mm']
         robot_y_mm = snapshot['y_mm']
-        px_per_m = MAP_SIZE_PIXELS / MAP_SIZE_METERS
+        theta_deg  = snapshot['theta_deg']
+        px_per_m   = MAP_SIZE_PIXELS / MAP_SIZE_METERS
 
         rob_col, rob_row = mm_to_map_px(robot_x_mm, robot_y_mm)
 
+        # Viewport in map pixel space
         zoom_half_m = ZOOM_HALF_M[self.zoom_idx]
         if zoom_half_m is None:
             col_lo, col_hi = 0.0, float(MAP_SIZE_PIXELS)
@@ -294,69 +277,81 @@ class SlamApp(App[None]):
                 robot_x_mm + self.pan_x_mm,
                 robot_y_mm + self.pan_y_mm,
             )
-            half = zoom_half_m * px_per_m
-            col_lo = cx - half
-            col_hi = cx + half
-            row_lo = cy - half
-            row_hi = cy + half
+            half   = zoom_half_m * px_per_m
+            col_lo = cx - half;  col_hi = cx + half
+            row_lo = cy - half;  row_hi = cy + half
 
         col_span = max(1e-9, col_hi - col_lo)
         row_span = max(1e-9, row_hi - row_lo)
 
+        # Robot LIDAR centre in display coordinates
         robot_visible = (col_lo <= rob_col < col_hi and row_lo <= rob_row < row_hi)
         if robot_visible:
-            robot_sc = max(0, min(disp_cols - 1, int((rob_col - col_lo) / col_span * disp_cols)))
-            robot_sr = max(0, min(disp_rows - 1, int((rob_row - row_lo) / row_span * disp_rows)))
+            robot_sc = max(0, min(disp_cols - 1,
+                           int((rob_col - col_lo) / col_span * disp_cols)))
+            robot_sr = max(0, min(disp_rows - 1,
+                           int((rob_row - row_lo) / row_span * disp_rows)))
         else:
             robot_sc = robot_sr = -1
 
-        vis_idx = render_map_numpy(
-            mapbytes,
-            col_lo,
-            col_hi,
-            row_lo,
-            row_hi,
-            disp_cols,
-            disp_rows,
-        )
+        # --- Robot body outline cells (rotated rectangle) ---
+        body_cells: dict[tuple[int, int], str] = {}
+        if robot_visible:
+            body_cells = robot_body_cells(
+                rob_col, rob_row, theta_deg,
+                col_lo, col_hi, row_lo, row_hi,
+                disp_cols, disp_rows,
+            )
 
+        # --- Breadcrumb path cells ---
         path_cells: set[tuple[int, int]] = set()
         if self._show_path:
             path_pts = snapshot.get('path', [])
             if path_pts:
                 path_cells = path_display_coords(
-                    path_pts,
-                    col_lo,
-                    col_hi,
-                    row_lo,
-                    row_hi,
-                    disp_cols,
-                    disp_rows,
+                    path_pts, col_lo, col_hi, row_lo, row_hi,
+                    disp_cols, disp_rows,
                 )
 
+        # --- Downsample map ---
+        vis_idx = render_map_numpy(
+            mapbytes, col_lo, col_hi, row_lo, row_hi, disp_cols, disp_rows,
+        )
+
+        # --- Render ---
         text = Text(no_wrap=True)
         for sr in range(disp_rows):
-            row_data = vis_idx[sr]
+            row_data  = vis_idx[sr]
             run_glyph = ''
             run_style = ''
 
             for sc in range(disp_cols):
+
+                # 1. Robot LIDAR centre arrow — highest priority
                 if robot_visible and sr == robot_sr and sc == robot_sc:
                     if run_glyph:
                         text.append(run_glyph, style=run_style)
                         run_glyph = ''
-                    text.append(robot_glyph(snapshot['theta_deg']), style=_STYLE_ROBOT)
+                    text.append(robot_glyph(theta_deg), style=_STYLE_ROBOT)
                     continue
 
-                if (sr, sc) in path_cells:
-                    cell_vis = int(row_data[sc])
-                    if cell_vis >= 3:
-                        if run_glyph:
-                            text.append(run_glyph, style=run_style)
-                            run_glyph = ''
-                        text.append(_GLYPH_PATH, style=_STYLE_PATH)
-                        continue
+                # 2. Robot body outline
+                if (sr, sc) in body_cells:
+                    if run_glyph:
+                        text.append(run_glyph, style=run_style)
+                        run_glyph = ''
+                    text.append(body_cells[(sr, sc)], style=_STYLE_ROBOT_BODY)
+                    continue
 
+                # 3. Breadcrumb path (only in free/unknown space)
+                if (sr, sc) in path_cells and int(row_data[sc]) >= 3:
+                    if run_glyph:
+                        text.append(run_glyph, style=run_style)
+                        run_glyph = ''
+                    text.append(_GLYPH_PATH, style=_STYLE_PATH)
+                    continue
+
+                # 4. Map tile
                 _, glyph, style = _VIS_TABLE[int(row_data[sc])]
                 if style == run_style:
                     run_glyph += glyph
@@ -379,10 +374,10 @@ class SlamApp(App[None]):
 
     def _refresh_view(self) -> None:
         try:
-            header = self.query_one('#header', Static)
-            map_widget = self.query_one('#map', Static)
-            status_widget = self.query_one('#status', Static)
-            help_widget = self.query_one('#help', Static)
+            header       = self.query_one('#header',  Static)
+            map_widget   = self.query_one('#map',     Static)
+            status_widget= self.query_one('#status',  Static)
+            help_widget  = self.query_one('#help',    Static)
         except Exception:
             return
 
@@ -394,7 +389,7 @@ class SlamApp(App[None]):
         elif snapshot['stopped'] and not snapshot['connected']:
             state = 'STOPPED'
 
-        path_flag = 'PATH:on' if self._show_path else 'PATH:off'
+        path_flag = 'BREADCRUMBS:on' if self._show_path else 'BREADCRUMBS:off'
 
         half_m = ZOOM_HALF_M[self.zoom_idx]
         if half_m is None:
@@ -403,12 +398,11 @@ class SlamApp(App[None]):
             view_str = f'close-up {half_m * 2:.1f}m x {half_m * 2:.1f}m'
 
         header.update(
-            f'SLAM Map | View: {view_str} | '
-            f'Zoom {self.zoom_idx + 1}/{len(ZOOM_HALF_M)} | '
-            f'{state} | {path_flag}'
+            f'SLAM Map | {view_str} | Zoom {self.zoom_idx + 1}/{len(ZOOM_HALF_M)} '
+            f'| {state} | {path_flag}'
         )
 
-        region = map_widget.content_region
+        region     = map_widget.content_region
         path_count = len(snapshot['path']) if self._show_path else 0
         render_key = (
             snapshot['map_version'],
@@ -425,18 +419,17 @@ class SlamApp(App[None]):
         if render_key != self._last_render_key:
             map_text, robot_visible = self._render_map_text(snapshot)
             self._cached_robot_visible = robot_visible
-            self._last_render_key = render_key
+            self._last_render_key      = render_key
             map_widget.update(map_text)
 
-        robot_visible = self._cached_robot_visible
-        robot_flag = 'visible' if robot_visible else 'off-screen'
+        robot_flag = 'visible' if self._cached_robot_visible else 'off-screen'
 
         status_widget.update(
             f'Pose: x={snapshot["x_mm"] / 1000:+.2f}m, '
             f'y={snapshot["y_mm"] / 1000:+.2f}m, '
-            f'theta={snapshot["theta_deg"]:.1f} deg | '
+            f'θ={snapshot["theta_deg"]:.1f}° | '
             f'Robot: {robot_flag} | '
-            f'Valid points: {snapshot["valid_points"]} | '
+            f'Valid pts: {snapshot["valid_points"]} | '
             f'Rounds: {snapshot["rounds_seen"]} | '
             f'Status: {snapshot["status_note"]}'
             f'{self._save_msg}'
@@ -444,12 +437,9 @@ class SlamApp(App[None]):
 
         help_widget.update(
             'Keys: +/- zoom | 1-5 presets | arrows/hjkl pan | '
-            'c center | p pause | t path | s save | q quit'
+            'c centre | p pause | t breadcrumbs | s save | q quit  '
+            '| ◉=LIDAR centre  ░=robot body  ·=path'
         )
-
-    # -----------------------------------------------------------------------
-    # App entry
-    # -----------------------------------------------------------------------
 
 
 def run() -> None:
