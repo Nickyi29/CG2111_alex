@@ -130,9 +130,9 @@ def _printHelp():
     print("========================================")
     print("  Type: <joint> <degrees>")
     print("  b <deg>   Base      (30-150)")
-    print("  s <deg>   Shoulder  (10-170)")
-    print("  e <deg>   Elbow     (10-170)")
-    print("  g <deg>   Gripper   (10-120)")
+    print("  s <deg>   Shoulder  (10-180)")
+    print("  e <deg>   Elbow     (10-200)")
+    print("  g <deg>   Gripper   (10-130)")
     print("")
     print("  Examples:")
     print("    b 90      base to 90 degrees")
@@ -243,8 +243,8 @@ def _handleInput(line: str, client: TCPClient):
             _sendArm(client, COMMAND_ARM_BASE, deg, 'BASE')
 
         elif joint == 's':
-            if not (10 <= deg <= 170):
-                print(f'[second_terminal] Shoulder out of range (10-200): {deg}')
+            if not (10 <= deg <= 180):
+                print(f'[second_terminal] Shoulder out of range (10-180): {deg}')
                 return
             # Slow speed for shoulder
             frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SPEED, params=[5])
@@ -258,8 +258,8 @@ def _handleInput(line: str, client: TCPClient):
             _sendArm(client, COMMAND_ARM_ELBOW, deg, 'ELBOW')
 
         elif joint == 'g':
-            if not (10 <= deg <= 120):
-                print(f'[second_terminal] Gripper out of range (10-120): {deg}')
+            if not (10 <= deg <= 130):
+                print(f'[second_terminal] Gripper out of range (10-130): {deg}')
                 return
             _sendArm(client, COMMAND_ARM_GRIPPER, deg, 'GRIPPER')
         return
