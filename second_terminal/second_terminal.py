@@ -143,24 +143,6 @@ def _printHelp():
     print("")
     print("  PRESET KEYS:")
     print("  h         Home all joints")
-    print("  j         Base LEFT  -> 60")
-    print("  r         Base RIGHT -> 120")
-    print("  i         Shoulder FORWARD -> 150 (slow)")
-    print("  k         Shoulder BACK    -> 100 (slow)")
-    print("  y         Shoulder MAX FWD -> 170 (slow)")
-    print("  t         Shoulder MAX BACK ->  60 (slow)")
-    print("  u         Elbow UP   -> 130")
-    print("  o         Elbow DOWN ->  50")
-    print("  p         Elbow HIGH -> 150")
-    print("  l         Elbow LOW  ->  20")
-    print("  n         Gripper OPEN  -> 10")
-    print("  m         Gripper CLOSE -> 80")
-    print("")
-    print("  PICK-UP SEQUENCE:")
-    print("  1   Lean shoulder forward (150)")
-    print("  2   Lower elbow to floor  (20)")
-    print("  3   Lift elbow up         (120)")
-    print("  4   Carry position        (100)")
     print("")
     print("  e         E-Stop (toggle)")
     print("  q         Quit")
@@ -318,70 +300,6 @@ def _handleInput(line: str, client: TCPClient):
         print('[second_terminal] Sent: ARM HOME')
         _waiting_for_ack = True
 
-    # ---- BASE ----
-    elif line == 'j':
-        _sendArm(client, COMMAND_ARM_BASE, 60, 'BASE LEFT')
-
-    elif line == 'r':
-        _sendArm(client, COMMAND_ARM_BASE, 120, 'BASE RIGHT')
-
-    # ---- SHOULDER ----
-    elif line == 'i':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SPEED, params=[5])
-        sendTPacketFrame(client.sock, frame)
-        _sendArm(client, COMMAND_ARM_SHOULDER, 150, 'SHOULDER FORWARD')
-
-    elif line == 'k':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SPEED, params=[5])
-        sendTPacketFrame(client.sock, frame)
-        _sendArm(client, COMMAND_ARM_SHOULDER, 100, 'SHOULDER BACK')
-
-    elif line == 'y':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SPEED, params=[5])
-        sendTPacketFrame(client.sock, frame)
-        _sendArm(client, COMMAND_ARM_SHOULDER, 170, 'SHOULDER MAX FWD')
-
-    elif line == 't':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SPEED, params=[5])
-        sendTPacketFrame(client.sock, frame)
-        _sendArm(client, COMMAND_ARM_SHOULDER, 60, 'SHOULDER MAX BACK')
-
-    # ---- ELBOW ----
-    elif line == 'u':
-        _sendArm(client, COMMAND_ARM_ELBOW, 130, 'ELBOW UP')
-
-    elif line == 'o':
-        _sendArm(client, COMMAND_ARM_ELBOW, 50, 'ELBOW DOWN')
-
-    elif line == 'p':
-        _sendArm(client, COMMAND_ARM_ELBOW, 150, 'ELBOW HIGH')
-
-    elif line == 'l':
-        _sendArm(client, COMMAND_ARM_ELBOW, 20, 'ELBOW LOW')
-
-    # ---- GRIPPER ----
-    elif line == 'n':
-        _sendArm(client, COMMAND_ARM_GRIPPER, 10, 'GRIPPER OPEN')
-
-    elif line == 'm':
-        _sendArm(client, COMMAND_ARM_GRIPPER, 80, 'GRIPPER CLOSE')
-
-    # ---- PICK-UP SEQUENCES ----
-    elif line == '1':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SPEED, params=[5])
-        sendTPacketFrame(client.sock, frame)
-        _sendArm(client, COMMAND_ARM_SHOULDER, 150, 'REACH FORWARD')
-
-    elif line == '2':
-        _sendArm(client, COMMAND_ARM_ELBOW, 20, 'LOWER TO FLOOR')
-
-    elif line == '3':
-        _sendArm(client, COMMAND_ARM_ELBOW, 120, 'LIFT')
-
-    elif line == '4':
-        frame = _packFrame(PACKET_TYPE_COMMAND, COMMAND_ARM_SPEED, params=[5])
-        sendTPacketFrame(client.sock, frame)
-        _sendArm(client, COMMAND_ARM_SHOULDER, 100, 'CARRY POSITION')
 
     else:
         print(f"[second_terminal] Unknown command: '{line}' — type ? for help")
