@@ -110,12 +110,6 @@ ISR(INT0_vect) {
     }
 }
 
-// =============================================================
-// Servo PWM — Timer4 CTC, blocking ISR
-// Busy-wait inside ISR pulls pins LOW at exact tick counts.
-// Max blocking time = 2ms (longest servo pulse).
-// Serial bytes are hardware-buffered so nothing is lost.
-// =============================================================
 
 void updateTicks(void) {
     cli();
@@ -126,8 +120,6 @@ void updateTicks(void) {
 }
 
 ISR(TIMER4_COMPA_vect) {
-    // --- Snapshot tick thresholds BEFORE sei() ---
-    // Using local copies means updateTicks() running after sei() cannot corrupt the thresholds mid-pulse.
     unsigned int t0 = servoTicks[0];
     unsigned int t1 = servoTicks[1];
     unsigned int t2 = servoTicks[2];
@@ -135,7 +127,6 @@ ISR(TIMER4_COMPA_vect) {
     // All servo pins HIGH — start of pulse window
     PORTA |= (BASE_PIN | SHOULDER_PIN | ELBOW_PIN | GRIPPER_PIN);
     sei();
-    // Busy-wait: pull each pin LOW at its exact tick count
     bool bActive = true, sActive = true, eActive = true, gActive = true;
     while (bActive || sActive || eActive || gActive) {
         unsigned int elapsed = TCNT4;
@@ -157,10 +148,6 @@ ISR(TIMER4_COMPA_vect) {
         }
     }
 }
-
-// =============================================================
-// Arm movement — non-blocking, steps 1 deg per msPerDeg ms
-// =============================================================
 
 void processMovement(void) {
     unsigned long now     = millis();
