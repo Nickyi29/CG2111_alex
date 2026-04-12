@@ -236,7 +236,7 @@ def handleColorCommand():
 # ----------------------------------------------------------------
 
 _camera           = None
-_frames_remaining = 10
+_frames_remaining = 15
 
 
 def openCamera():
