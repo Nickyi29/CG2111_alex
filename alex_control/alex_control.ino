@@ -32,7 +32,7 @@ int                   msPerDeg        = 1;
 unsigned long         lastMoveTime[4] = {0, 0, 0, 0};
 
 // 10° = 2000 + (10 * 2000 / 180) = 2111 ticks
-volatile unsigned int servoTicks[4]   = {3000, 3000, 3000, 2111};
+volatile unsigned int servoTicks[4]   = {3000, 3000, 3000, 2722};
 
 // =============================================================
 // Direction constants — must match robotlib.ino
@@ -50,7 +50,7 @@ volatile unsigned int servoTicks[4]   = {3000, 3000, 3000, 2111};
 
 #define SPEED_MIN     30
 #define SPEED_MAX     255
-#define SPEED_DEFAULT 150
+#define SPEED_DEFAULT 220
 #define SPEED_STEP    50
 
 // =============================================================
