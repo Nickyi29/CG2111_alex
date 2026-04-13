@@ -21,7 +21,7 @@
 static uint8_t  _currentSr       = 0x00;
 static uint8_t  _swDuty          = 255;
 static uint32_t _swTimer         = 0;
-#define SW_PWM_PERIOD_MS            20
+#define SW_PWM_PERIOD_MS            10
 
 static void srWrite(uint8_t data) {
     PORTB &= ~(1 << PB6);
