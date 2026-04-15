@@ -31,7 +31,7 @@ MAX_DISTANCE_MM  = 12000
 # ===========================================================================
 # Set to the CCW angle from robot forward to LIDAR forward.
 # 0 = LIDAR forward matches robot forward (default).
-LIDAR_OFFSET_DEG = 0
+LIDAR_OFFSET_DEG = 45
 
 # ===========================================================================
 # Scan quality thresholds
