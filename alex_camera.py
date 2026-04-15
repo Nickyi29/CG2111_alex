@@ -21,8 +21,8 @@ Requirements:
 # Two image rows are packed into one terminal row using the Unicode
 # LOWER HALF BLOCK character (▄), so the captured image height must
 # be even.
-RENDER_WIDTH  = 150
-RENDER_HEIGHT = 78
+RENDER_WIDTH  = 80
+RENDER_HEIGHT = 44
 
 RESET = "\033[0m"
 
