@@ -2,18 +2,15 @@
 """
 renderer.py - Map rendering helpers for the terminal display.
 
-RENDERING CONVENTION:
-  █  = confirmed wall        (avoid)
-  ▓  = uncertain / frontier  (treat as wall)
-  ·  = unexplored            (go explore)
-     = empty / free space   (safe to drive — shows as blank)
-  ↑→↓← etc = robot arrow    (directional, bright yellow)
-  •  = breadcrumb path       (cyan)
+Based on the original Studio 16 renderer.
+Improvements kept:
+  1. High-contrast colour palette (walls bright white, free space clear)
+  2. Robot shown as a directional arrow (↑↗→↘↓↙←↖) in bright yellow
+  3. Path breadcrumb helper (path_display_coords) unchanged
 """
 
 from __future__ import annotations
 
-import math
 import numpy as np
 
 from settings import (
@@ -24,55 +21,51 @@ from settings import (
 )
 
 # ===========================================================================
-# Glyphs and styles
+# Glyphs and styles — original palette restored, contrast improved
 # ===========================================================================
 
-_GLYPH_WALL     = '\u2588'   # █  confirmed wall
-_STYLE_WALL     = 'bold white'
+_GLYPH_WALL      = '\u2588'   # █  confirmed wall       (was red in original)
+_GLYPH_WALL_SOFT = '\u2593'   # ▓  probable wall
+_GLYPH_FRONTIER  = '\u2592'   # ▒  frontier / uncertain
+_GLYPH_UNKNOWN   = '\u00b7'   # ·  unknown / unexplored
+_GLYPH_FREE      = '\u25e6'   # ◦  free space
 
-_GLYPH_FRONTIER = '\u2593'   # ▓  uncertain / frontier
-_STYLE_FRONTIER = 'white'
+_STYLE_WALL      = 'bold bright_white'
+_STYLE_WALL_SOFT = 'bright_white'
+_STYLE_FRONTIER  = 'yellow'
+_STYLE_UNKNOWN   = 'bright_black'
+_STYLE_FREE      = 'cyan'
 
-_GLYPH_UNKNOWN  = '\u00b7'   # ·  not yet explored
-_STYLE_UNKNOWN  = 'bright_black'
+# Robot — directional arrow, bold bright yellow
+_STYLE_ROBOT     = 'bold bright_yellow'
 
-_GLYPH_FREE     = ' '        #    safe to drive — empty cell
-_STYLE_FREE     = 'default'
+# Path breadcrumbs
+_GLYPH_PATH      = '\u00b7'   # ·
+_STYLE_PATH      = 'bold cyan'
 
-# Robot — directional arrow, bold bright yellow so it pops on any background
-_STYLE_ROBOT    = 'bold bright_yellow'
-
-# Breadcrumb path dots
-_GLYPH_PATH     = '\u2022'   # •  bullet dot
-_STYLE_PATH     = 'bold cyan'
-
-# 8 directional arrows indexed 0-7 (E NE N NW W SW S SE)
+# 8 directional arrows: E NE N NW W SW S SE
 _DIRECTION_GLYPHS = [
-    '\u2192',   # →  East       0
-    '\u2197',   # ↗  North-East 1
-    '\u2191',   # ↑  North      2
-    '\u2196',   # ↖  North-West 3
-    '\u2190',   # ←  West       4
-    '\u2199',   # ↙  South-West 5
-    '\u2193',   # ↓  South      6
-    '\u2198',   # ↘  South-East 7
+    '\u2192',   # →  East
+    '\u2197',   # ↗  North-East
+    '\u2191',   # ↑  North
+    '\u2196',   # ↖  North-West
+    '\u2190',   # ←  West
+    '\u2199',   # ↙  South-West
+    '\u2193',   # ↓  South
+    '\u2198',   # ↘  South-East
 ]
 
 # ===========================================================================
-# Visibility lookup table
+# Visibility lookup table — original thresholds
 # ===========================================================================
-# BreezySLAM values: 0 = confirmed wall, 127 = unknown, 255 = free space
-#
-#   0-79   → wall     █
-#   80-140 → frontier ▓
-#   141-200→ unknown  ·
-#   201-255→ free      (blank)
+# BreezySLAM: 0 = wall, 127 = unknown, 255 = free
 
 _VIS_TABLE = [
-    (80,  _GLYPH_WALL,     _STYLE_WALL),
-    (141, _GLYPH_FRONTIER, _STYLE_FRONTIER),
-    (201, _GLYPH_UNKNOWN,  _STYLE_UNKNOWN),
-    (256, _GLYPH_FREE,     _STYLE_FREE),
+    (40,  _GLYPH_WALL,      _STYLE_WALL),
+    (80,  _GLYPH_WALL_SOFT, _STYLE_WALL_SOFT),
+    (120, _GLYPH_FRONTIER,  _STYLE_FRONTIER),
+    (145, _GLYPH_UNKNOWN,   _STYLE_UNKNOWN),
+    (256, _GLYPH_FREE,      _STYLE_FREE),
 ]
 
 _VIS_LUT = np.empty(256, dtype=np.uint8)
@@ -83,7 +76,7 @@ for _i in range(256):
             break
 
 # ===========================================================================
-# Coordinate conversion
+# Coordinate helpers — original implementation
 # ===========================================================================
 
 def mm_to_map_px(x_mm: float, y_mm: float) -> tuple[float, float]:
@@ -97,7 +90,6 @@ def mm_to_map_px(x_mm: float, y_mm: float) -> tuple[float, float]:
 
 
 def pan_step_mm(zoom_idx: int) -> float:
-    """Pan distance in mm for one key-press at the given zoom level."""
     half_m = ZOOM_HALF_M[zoom_idx]
     if half_m is None:
         return 0.0
@@ -105,28 +97,17 @@ def pan_step_mm(zoom_idx: int) -> float:
 
 
 # ===========================================================================
-# Robot arrow glyph
+# Robot arrow glyph — improvement: direction arrow instead of static ◉
 # ===========================================================================
 
 def robot_glyph(theta_deg: float) -> str:
-    """
-    Return a directional arrow character for the robot's current heading.
-
-    BreezySLAM theta is CCW from +x (east).
-    We map this to one of 8 arrow characters:
-      theta=0   (east)  → →
-      theta=90  (north) → ↑
-      theta=180 (west)  → ←
-      theta=270 (south) → ↓
-    The +2 offset aligns BreezySLAM's coordinate convention with the
-    display orientation (north = up on screen).
-    """
+    """Return a directional arrow for the robot heading."""
     idx = (int(round(theta_deg / 45.0)) + 2) % 8
     return _DIRECTION_GLYPHS[idx]
 
 
 # ===========================================================================
-# Path breadcrumb helper
+# Path breadcrumb helper — original implementation
 # ===========================================================================
 
 def path_display_coords(
@@ -138,7 +119,7 @@ def path_display_coords(
     disp_cols: int,
     disp_rows: int,
 ) -> set[tuple[int, int]]:
-    """Convert path waypoints (mm) to display cell (row, col) indices."""
+    """Convert path waypoints to display-cell (row, col) indices."""
     col_span = max(1e-9, col_hi - col_lo)
     row_span = max(1e-9, row_hi - row_lo)
     coords: set[tuple[int, int]] = set()
@@ -154,43 +135,7 @@ def path_display_coords(
 
 
 # ===========================================================================
-# Nearest wall distance (for status bar)
-# ===========================================================================
-
-def nearest_wall_mm(
-    robot_x_mm: float,
-    robot_y_mm: float,
-    mapbytes: bytes,
-    search_radius_mm: float = 1000.0,
-) -> float:
-    """Return estimated distance in mm from robot to nearest wall."""
-    px_per_mm = MAP_SIZE_PIXELS / (MAP_SIZE_METERS * 1000.0)
-    rob_col, rob_row = mm_to_map_px(robot_x_mm, robot_y_mm)
-    rob_c = int(round(rob_col))
-    rob_r = int(round(rob_row))
-
-    radius_px = int(search_radius_mm * px_per_mm)
-    maparray = np.frombuffer(mapbytes, dtype=np.uint8).reshape(
-        MAP_SIZE_PIXELS, MAP_SIZE_PIXELS)
-    maparray = np.rot90(np.flipud(maparray), k=1)
-
-    min_dist_mm = search_radius_mm
-    step = max(1, radius_px // 30)
-
-    for dr in range(-radius_px, radius_px + 1, step):
-        for dc in range(-radius_px, radius_px + 1, step):
-            r = rob_r + dr
-            c = rob_c + dc
-            if 0 <= r < MAP_SIZE_PIXELS and 0 <= c < MAP_SIZE_PIXELS:
-                if maparray[r, c] < 80:
-                    dist_mm = math.sqrt(dr * dr + dc * dc) / px_per_mm
-                    if dist_mm < min_dist_mm:
-                        min_dist_mm = dist_mm
-    return min_dist_mm
-
-
-# ===========================================================================
-# Map downsampling
+# Map downsampling — original implementation
 # ===========================================================================
 
 def render_map_numpy(
@@ -202,7 +147,7 @@ def render_map_numpy(
     disp_cols: int,
     disp_rows: int,
 ) -> np.ndarray:
-    """Downsample map region to display size. Returns VIS_LUT index array."""
+    """Downsample a rectangular region of the map into a display-sized array."""
     maparray = np.frombuffer(mapbytes, dtype=np.uint8).reshape(
         MAP_SIZE_PIXELS, MAP_SIZE_PIXELS)
     maparray = np.rot90(np.flipud(maparray), k=1)
