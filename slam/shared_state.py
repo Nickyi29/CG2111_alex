@@ -56,27 +56,31 @@ class ProcessSharedState:
             self.shm.buf[i] = UNKNOWN_BYTE
 
         # Robot pose (doubles for sub-mm precision).
-        self.x_mm = multiprocessing.Value(ctypes.c_double, 0.0)
-        self.y_mm = multiprocessing.Value(ctypes.c_double, 0.0)
+        self.x_mm      = multiprocessing.Value(ctypes.c_double, 0.0)
+        self.y_mm      = multiprocessing.Value(ctypes.c_double, 0.0)
         self.theta_deg = multiprocessing.Value(ctypes.c_double, 0.0)
 
         # Scan and update counters.
         self.valid_points = multiprocessing.Value(ctypes.c_int, 0)
-        self.rounds_seen = multiprocessing.Value(ctypes.c_int, 0)
-        self.map_version = multiprocessing.Value(ctypes.c_int, 0)
+        self.rounds_seen  = multiprocessing.Value(ctypes.c_int, 0)
+        self.map_version  = multiprocessing.Value(ctypes.c_int, 0)
         self.pose_version = multiprocessing.Value(ctypes.c_int, 0)
 
         # Status flags.
         self.connected = multiprocessing.Value(ctypes.c_bool, False)
-        self.stopped = multiprocessing.Value(ctypes.c_bool, False)
-        self.paused = multiprocessing.Value(ctypes.c_bool, False)
+        self.stopped   = multiprocessing.Value(ctypes.c_bool, False)
+        self.paused    = multiprocessing.Value(ctypes.c_bool, False)
 
         # Short text fields (fixed-size byte arrays for IPC safety).
-        self.status_note = multiprocessing.Array(ctypes.c_char, 128)
+        self.status_note   = multiprocessing.Array(ctypes.c_char, 128)
         self.error_message = multiprocessing.Array(ctypes.c_char, 256)
 
         # Signal from the UI to ask the SLAM process to stop cleanly.
         self.stop_event = multiprocessing.Event()
+
+    # ------------------------------------------------------------------
+    # Text field helpers
+    # ------------------------------------------------------------------
 
     def set_status(self, msg: str):
         """Write a status string (truncated to 127 bytes)."""
@@ -95,14 +99,23 @@ class ProcessSharedState:
         val = self.error_message.value
         return val.decode('utf-8', errors='replace') if val else ''
 
+    # ------------------------------------------------------------------
+    # Path snapshot stub
+    # Required by ui.py — returns empty list since path tracking is not
+    # active in this version of shared_state / slam_process.
+    # ------------------------------------------------------------------
+
+    def get_path_snapshot(self):
+        """Return recorded path points. Stub returns empty list."""
+        return []
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
     def cleanup(self):
         """Release the shared memory block.  Call this in the UI process
         after the SLAM process has exited."""
-      
-    def get_path_snapshot(self):
-        """Stub — path tracking not active in this version."""
-
-    return []
         try:
             self.shm.close()
             self.shm.unlink()
