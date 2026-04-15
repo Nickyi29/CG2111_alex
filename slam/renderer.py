@@ -2,10 +2,18 @@
 """
 renderer.py - Map rendering helpers for the terminal display.
 
-IMPROVEMENTS:
-  - Robot body outline: draws a rotated box around the LIDAR centre
-    showing the actual robot footprint (2 LIDAR diameters front and back).
-  - Breadcrumb trail: path_display_coords() unchanged, works correctly.
+NAVIGATION-OPTIMISED RENDERING:
+  Maximum contrast between walls, unknown space, and free space.
+  Walls = solid block █ (bright white on dark bg = clearly visible)
+  Free  = empty space   (dark background = obviously safe)
+  Unknown = dim dot ·   (clearly "not yet explored")
+  Robot = filled box ░ outline + arrow centre
+  Path  = cyan dots ·
+
+This makes the map instantly readable for navigation:
+  "If it's blank, I can drive there."
+  "If it's █, it's a wall."
+  "If it's ·, I haven't been there yet."
 """
 
 from __future__ import annotations
@@ -21,38 +29,44 @@ from settings import (
 )
 
 # ===========================================================================
-# Glyphs and styles
+# HIGH CONTRAST navigation palette
 # ===========================================================================
 
-_GLYPH_WALL      = '\u2588'
-_GLYPH_WALL_SOFT = '\u2593'
-_GLYPH_FRONTIER  = '\u2592'
-_GLYPH_UNKNOWN   = '\u00b7'
-_GLYPH_FREE      = '\u2591'
-_GLYPH_FREE_CLEAR= '\u25e6'
-_GLYPH_ROBOT     = '\u25c9'   # robot centre (LIDAR position)
+# Walls — solid bright block, maximum visibility
+_GLYPH_WALL      = '\u2588'   # █ full block
+_STYLE_WALL      = 'bold white'
 
-_GLYPH_PATH      = '\u00b7'
+# Probable wall / frontier — dark block
+_GLYPH_FRONTIER  = '\u2593'   # ▓ dark shade
+_STYLE_FRONTIER  = 'white'
+
+# Unknown — dim dot, clearly "unexplored"
+_GLYPH_UNKNOWN   = '\u00b7'   # · middle dot
+_STYLE_UNKNOWN   = 'bright_black'
+
+# Free space — EMPTY. Nothing. Drive here.
+_GLYPH_FREE      = ' '
+_STYLE_FREE      = 'default'
+
+# Robot
+_GLYPH_ROBOT     = '\u25c9'   # ◉ fisheye = LIDAR centre
+_STYLE_ROBOT     = 'bold bright_yellow on default'
+
+# Robot body
+_GLYPH_ROBOT_BODY= '\u2591'   # ░ light shade
+_STYLE_ROBOT_BODY= 'bright_yellow'
+
+# Path breadcrumbs
+_GLYPH_PATH      = '\u2022'   # • bullet — more visible than ·
 _STYLE_PATH      = 'bold cyan'
 
-_STYLE_WALL      = 'bold bright_white'
-_STYLE_WALL_SOFT = 'bright_white'
-_STYLE_FRONTIER  = 'yellow'
-_STYLE_UNKNOWN   = 'bright_black'
-_STYLE_FREE      = 'cyan'
-_STYLE_FREE_CLEAR= 'bright_cyan'
-_STYLE_ROBOT     = 'bold bright_yellow'
-_STYLE_ROBOT_BODY= 'bright_yellow'     # robot outline
-
-# Robot body outline characters
-# We use a simple ░ block for body cells and box-drawing for edges.
-_GLYPH_ROBOT_BODY   = '\u2591'   # light shade — robot interior
-_GLYPH_ROBOT_EDGE_H = '\u2500'   # ─  horizontal edge
-_GLYPH_ROBOT_EDGE_V = '\u2502'   # │  vertical edge
-_GLYPH_ROBOT_TL     = '\u250C'   # ┌  top-left corner
-_GLYPH_ROBOT_TR     = '\u2510'   # ┐  top-right corner
-_GLYPH_ROBOT_BL     = '\u2514'   # └  bottom-left corner
-_GLYPH_ROBOT_BR     = '\u2518'   # ┘  bottom-right corner
+# Box drawing for robot outline
+_GLYPH_ROBOT_EDGE_H = '\u2500'   # ─
+_GLYPH_ROBOT_EDGE_V = '\u2502'   # │
+_GLYPH_ROBOT_TL     = '\u250C'   # ┌
+_GLYPH_ROBOT_TR     = '\u2510'   # ┐
+_GLYPH_ROBOT_BL     = '\u2514'   # └
+_GLYPH_ROBOT_BR     = '\u2518'   # ┘
 
 _DIRECTION_GLYPHS = [
     '\u2192', '\u2197', '\u2191', '\u2196',
@@ -60,15 +74,21 @@ _DIRECTION_GLYPHS = [
 ]
 
 # ===========================================================================
-# Visibility lookup table
+# Visibility lookup table — 4 categories for maximum clarity
 # ===========================================================================
 
+# BreezySLAM: 0=wall, 127=unknown, 255=free
+# Thresholds tuned for maximum navigation clarity:
+#   0-79:   wall (solid █)       ← widened to catch probable walls
+#   80-140: frontier (▓)         ← uncertain zone — treat as wall
+#   141-200: unknown (·)         ← not yet explored
+#   201-255: free (space)        ← safe to drive
+
 _VIS_TABLE = [
-    (40,  _GLYPH_WALL,       _STYLE_WALL),
-    (100, _GLYPH_WALL_SOFT,  _STYLE_WALL_SOFT),
-    (120, _GLYPH_FRONTIER,   _STYLE_FRONTIER),
-    (145, _GLYPH_UNKNOWN,    _STYLE_UNKNOWN),
-    (256, _GLYPH_FREE_CLEAR, _STYLE_FREE_CLEAR),
+    (80,  _GLYPH_WALL,     _STYLE_WALL),      # 0-79   confirmed + probable wall
+    (141, _GLYPH_FRONTIER, _STYLE_FRONTIER),  # 80-140 uncertain / frontier
+    (201, _GLYPH_UNKNOWN,  _STYLE_UNKNOWN),   # 141-200 unknown space
+    (256, _GLYPH_FREE,     _STYLE_FREE),      # 201-255 free space
 ]
 
 _VIS_LUT = np.empty(256, dtype=np.uint8)
@@ -79,22 +99,20 @@ for _i in range(256):
             break
 
 # ===========================================================================
-# Robot physical dimensions
+# Robot physical dimensions (RPLidar A1M8 ~70mm dia, 2 each side)
 # ===========================================================================
 
-# RPLidar A1M8 diameter ≈ 70mm.
-# Robot chassis: 2 LIDAR diameters front + 2 LIDAR diameters back from LIDAR.
-# Total length = 4 * 70mm = 280mm.  Half-extent from LIDAR centre = 140mm.
-# Width is approximately the same.
-_ROBOT_HALF_LENGTH_MM = 140.0   # front and back from LIDAR centre
-_ROBOT_HALF_WIDTH_MM  = 140.0   # left and right from LIDAR centre
+# Kept intentionally smaller than true chassis (~100mm half-length).
+# The body outline is a visual orientation aid only — the LIDAR already
+# maps true wall distances. Making it smaller stops it covering walls/path.
+_ROBOT_HALF_LENGTH_MM = 60.0
+_ROBOT_HALF_WIDTH_MM  = 50.0
 
 # ===========================================================================
 # Coordinate conversion
 # ===========================================================================
 
 def mm_to_map_px(x_mm: float, y_mm: float) -> tuple[float, float]:
-    """Convert a BreezySLAM pose (mm) to map array indices (col, row)."""
     px_per_mm = MAP_SIZE_PIXELS / (MAP_SIZE_METERS * 1000.0)
     old_col = x_mm * px_per_mm
     old_row = (MAP_SIZE_PIXELS - 1) - (y_mm * px_per_mm)
@@ -104,25 +122,19 @@ def mm_to_map_px(x_mm: float, y_mm: float) -> tuple[float, float]:
 
 
 def pan_step_mm(zoom_idx: int) -> float:
-    """Return the pan distance in mm for one key-press at the given zoom."""
     half_m = ZOOM_HALF_M[zoom_idx]
     if half_m is None:
         return 0.0
     return max(100.0, half_m * 1000.0 * PAN_STEP_FRACTION)
 
 
-# ===========================================================================
-# Robot heading glyph
-# ===========================================================================
-
 def robot_glyph(theta_deg: float) -> str:
-    """Choose a directional arrow for the robot LIDAR marker."""
     idx = (int(round(theta_deg / 45.0)) + 2) % 8
     return _DIRECTION_GLYPHS[idx]
 
 
 # ===========================================================================
-# Robot body outline in display coordinates
+# Robot body outline
 # ===========================================================================
 
 def robot_body_cells(
@@ -136,65 +148,37 @@ def robot_body_cells(
     disp_cols: int,
     disp_rows:  int,
 ) -> dict[tuple[int, int], str]:
-    """
-    Return a dict mapping (disp_row, disp_col) -> glyph for the robot body outline.
-
-    The robot body is a rectangle centred on the LIDAR position.
-    The rectangle is rotated by theta_deg (BreezySLAM CCW from +x).
-    Only cells inside the display viewport are returned.
-
-    The returned glyphs are box-drawing characters for corners and edges,
-    and light-shade for interior cells.
-    """
-    # Pixel scale: map pixels per mm
     px_per_mm = MAP_SIZE_PIXELS / (MAP_SIZE_METERS * 1000.0)
+    hl = _ROBOT_HALF_LENGTH_MM * px_per_mm
+    hw = _ROBOT_HALF_WIDTH_MM  * px_per_mm
 
-    # Half-extents in map pixels
-    hl = _ROBOT_HALF_LENGTH_MM * px_per_mm   # forward/backward extent
-    hw = _ROBOT_HALF_WIDTH_MM  * px_per_mm   # left/right extent
-
-    # BreezySLAM theta is CCW from +x in mm space.
-    # In map pixel space (col=old_row, row=MAP-old_col) the axes are rotated.
-    # theta in map pixel space = -(theta_deg) + 90 degrees (due to axis swap).
-    # We compute corners in mm space and convert each to map pixels.
     theta_rad = math.radians(theta_deg)
     cos_t = math.cos(theta_rad)
     sin_t = math.sin(theta_rad)
 
-    # Robot centre in mm (approximate from map pixel position)
-    # Reverse of mm_to_map_px:
-    #   col = (MAP-1) - y*px_per_mm   →  y = ((MAP-1) - col) / px_per_mm
-    #   row = (MAP-1) - x*px_per_mm   →  x = ((MAP-1) - row) / px_per_mm
     cx_mm = (MAP_SIZE_PIXELS - 1 - robot_row) / px_per_mm
     cy_mm = (MAP_SIZE_PIXELS - 1 - robot_col) / px_per_mm
 
-    # 4 corners in mm space (forward=+x in robot frame, left=+y in robot frame)
-    # Robot frame: forward along theta, left perpendicular CCW
-    fwd = ( cos_t,  sin_t)   # forward unit vector
-    lft = (-sin_t,  cos_t)   # left unit vector
+    fwd = ( cos_t,  sin_t)
+    lft = (-sin_t,  cos_t)
 
-    corners_mm = [
-        (cx_mm + hl*fwd[0] + hw*lft[0],  cy_mm + hl*fwd[1] + hw*lft[1]),  # front-left
-        (cx_mm + hl*fwd[0] - hw*lft[0],  cy_mm + hl*fwd[1] - hw*lft[1]),  # front-right
-        (cx_mm - hl*fwd[0] - hw*lft[0],  cy_mm - hl*fwd[1] - hw*lft[1]),  # back-right
-        (cx_mm - hl*fwd[0] + hw*lft[0],  cy_mm - hl*fwd[1] + hw*lft[1]),  # back-left
-    ]
-
-    # Convert corners to map pixel space
-    corners_px = [mm_to_map_px(x, y) for x, y in corners_mm]
-
-    # Convert map pixel corners to display cell coordinates
     col_span = max(1e-9, col_hi - col_lo)
     row_span = max(1e-9, row_hi - row_lo)
 
-    def map_to_disp(col_px: float, row_px: float) -> tuple[float, float]:
-        dc = (col_px - col_lo) / col_span * disp_cols
-        dr = (row_px - row_lo) / row_span * disp_rows
-        return dc, dr
+    corners_mm = [
+        (cx_mm + hl*fwd[0] + hw*lft[0], cy_mm + hl*fwd[1] + hw*lft[1]),
+        (cx_mm + hl*fwd[0] - hw*lft[0], cy_mm + hl*fwd[1] - hw*lft[1]),
+        (cx_mm - hl*fwd[0] - hw*lft[0], cy_mm - hl*fwd[1] - hw*lft[1]),
+        (cx_mm - hl*fwd[0] + hw*lft[0], cy_mm - hl*fwd[1] + hw*lft[1]),
+    ]
 
-    corners_disp = [map_to_disp(c, r) for c, r in corners_px]
+    corners_px   = [mm_to_map_px(x, y) for x, y in corners_mm]
+    corners_disp = [
+        ((c - col_lo) / col_span * disp_cols,
+         (r - row_lo) / row_span * disp_rows)
+        for c, r in corners_px
+    ]
 
-    # Find bounding box in display space
     dcs = [c for c, r in corners_disp]
     drs = [r for c, r in corners_disp]
     dc_min = int(math.floor(min(dcs)))
@@ -206,47 +190,31 @@ def robot_body_cells(
 
     for dr in range(dr_min, dr_max + 1):
         for dc in range(dc_min, dc_max + 1):
-            # Skip if outside display
             if dr < 0 or dr >= disp_rows or dc < 0 or dc >= disp_cols:
                 continue
-
-            # Determine if this display cell is inside the rotated rectangle.
-            # Convert display cell centre back to mm space.
             col_px = (dc + 0.5) / disp_cols * col_span + col_lo
             row_px = (dr + 0.5) / disp_rows * row_span + row_lo
-
-            # Back to mm
             x_mm = (MAP_SIZE_PIXELS - 1 - row_px) / px_per_mm
             y_mm = (MAP_SIZE_PIXELS - 1 - col_px) / px_per_mm
-
-            # Transform to robot frame
             dx = x_mm - cx_mm
             dy = y_mm - cy_mm
             local_fwd  =  dx * cos_t + dy * sin_t
             local_left = -dx * sin_t + dy * cos_t
 
             if abs(local_fwd) <= hl and abs(local_left) <= hw:
-                # Inside robot body — determine glyph by position
                 on_front = abs(local_fwd  - hl) < hl * 0.25
                 on_back  = abs(local_fwd  + hl) < hl * 0.25
                 on_left  = abs(local_left - hw) < hw * 0.25
                 on_right = abs(local_left + hw) < hw * 0.25
-
-                on_edge = on_front or on_back or on_left or on_right
+                on_edge  = on_front or on_back or on_left or on_right
 
                 if on_edge:
-                    if on_front and on_left:
-                        glyph = _GLYPH_ROBOT_TL
-                    elif on_front and on_right:
-                        glyph = _GLYPH_ROBOT_TR
-                    elif on_back and on_left:
-                        glyph = _GLYPH_ROBOT_BL
-                    elif on_back and on_right:
-                        glyph = _GLYPH_ROBOT_BR
-                    elif on_front or on_back:
-                        glyph = _GLYPH_ROBOT_EDGE_H
-                    else:
-                        glyph = _GLYPH_ROBOT_EDGE_V
+                    if on_front and on_left:    glyph = _GLYPH_ROBOT_TL
+                    elif on_front and on_right: glyph = _GLYPH_ROBOT_TR
+                    elif on_back and on_left:   glyph = _GLYPH_ROBOT_BL
+                    elif on_back and on_right:  glyph = _GLYPH_ROBOT_BR
+                    elif on_front or on_back:   glyph = _GLYPH_ROBOT_EDGE_H
+                    else:                       glyph = _GLYPH_ROBOT_EDGE_V
                 else:
                     glyph = _GLYPH_ROBOT_BODY
 
@@ -256,7 +224,7 @@ def robot_body_cells(
 
 
 # ===========================================================================
-# Path breadcrumb helper
+# Path breadcrumbs
 # ===========================================================================
 
 def path_display_coords(
@@ -268,10 +236,8 @@ def path_display_coords(
     disp_cols: int,
     disp_rows:  int,
 ) -> set[tuple[int, int]]:
-    """Convert path waypoints to display-cell (row, col) indices."""
     col_span = max(1e-9, col_hi - col_lo)
     row_span = max(1e-9, row_hi - row_lo)
-
     coords: set[tuple[int, int]] = set()
     for x_mm, y_mm in path_pts:
         col, row = mm_to_map_px(x_mm, y_mm)
@@ -283,7 +249,44 @@ def path_display_coords(
 
 
 # ===========================================================================
-# Vectorized map downsampling
+# Nearest wall distance (for status bar navigation aid)
+# ===========================================================================
+
+def nearest_wall_mm(
+    robot_x_mm: float,
+    robot_y_mm: float,
+    mapbytes: bytes,
+    search_radius_mm: float = 1000.0,
+) -> float:
+    """Estimate distance to nearest wall from robot position in mm."""
+    px_per_mm = MAP_SIZE_PIXELS / (MAP_SIZE_METERS * 1000.0)
+    rob_col, rob_row = mm_to_map_px(robot_x_mm, robot_y_mm)
+    rob_c = int(round(rob_col))
+    rob_r = int(round(rob_row))
+
+    radius_px = int(search_radius_mm * px_per_mm)
+    maparray = np.frombuffer(mapbytes, dtype=np.uint8).reshape(
+        MAP_SIZE_PIXELS, MAP_SIZE_PIXELS)
+    maparray = np.rot90(np.flipud(maparray), k=1)
+
+    min_dist_mm = search_radius_mm
+    step = max(1, radius_px // 30)  # sample sparsely for speed
+
+    for dr in range(-radius_px, radius_px + 1, step):
+        for dc in range(-radius_px, radius_px + 1, step):
+            r = rob_r + dr
+            c = rob_c + dc
+            if 0 <= r < MAP_SIZE_PIXELS and 0 <= c < MAP_SIZE_PIXELS:
+                if maparray[r, c] < 80:   # wall threshold
+                    dist_px = math.sqrt(dr*dr + dc*dc)
+                    dist_mm = dist_px / px_per_mm
+                    if dist_mm < min_dist_mm:
+                        min_dist_mm = dist_mm
+    return min_dist_mm
+
+
+# ===========================================================================
+# Map downsampling
 # ===========================================================================
 
 def render_map_numpy(
@@ -295,10 +298,8 @@ def render_map_numpy(
     disp_cols: int,
     disp_rows:  int,
 ) -> np.ndarray:
-    """Downsample a rectangular region of the map into a display-sized array."""
     maparray = np.frombuffer(mapbytes, dtype=np.uint8).reshape(
-        MAP_SIZE_PIXELS, MAP_SIZE_PIXELS,
-    )
+        MAP_SIZE_PIXELS, MAP_SIZE_PIXELS)
     maparray = np.rot90(np.flipud(maparray), k=1)
 
     samples_per_cell = 6
