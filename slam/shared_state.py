@@ -98,7 +98,8 @@ class ProcessSharedState:
     def cleanup(self):
         """Release the shared memory block.  Call this in the UI process
         after the SLAM process has exited."""
-      def get_path_snapshot(self):
+      
+    def get_path_snapshot(self):
     """Stub — path tracking not active in this version."""
 
     return []
