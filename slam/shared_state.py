@@ -100,7 +100,7 @@ class ProcessSharedState:
         after the SLAM process has exited."""
       
     def get_path_snapshot(self):
-    """Stub — path tracking not active in this version."""
+        """Stub — path tracking not active in this version."""
 
     return []
         try:
