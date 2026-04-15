@@ -3,10 +3,10 @@
 lidar.py - LIDAR hardware driver for the RPLidar A1M8.
 
 Provides three functions used by the SLAM process:
-connect() - open the serial port, reset the sensor, and start the motor
-get_scan_mode() - return the recommended scan mode for this sensor model
-scan_rounds() - yield one complete 360-degree scan per motor rotation
-disconnect() - stop the motor and close the serial port
+  connect()      - open the serial port, reset the sensor, and start the motor
+  get_scan_mode() - return the recommended scan mode for this sensor model
+  scan_rounds()  - yield one complete 360-degree scan per motor rotation
+  disconnect()   - stop the motor and close the serial port
 
 The LIDAR_PORT and LIDAR_BAUD settings live in settings.py.
 """
@@ -28,6 +28,7 @@ def connect(port=LIDAR_PORT, baudrate=LIDAR_BAUD):
     """
     try:
         lidar = PyRPlidar()
+        # Connect, reset, wait for the sensor to restart, then reconnect.
         lidar.connect(port=port, baudrate=baudrate, timeout=10)
         lidar.reset()
         time.sleep(2)
@@ -56,17 +57,18 @@ def scan_rounds(lidar, mode):
 
     Each yielded value is a (angles, distances) tuple containing two
     parallel lists:
-    angles - float degrees, 0.0 to 360.0
-    distances - float mm (0 means no return / out of range)
+      angles    - float degrees, 0.0 to 360.0
+      distances - float mm (0 means no return / out of range)
 
     The generator runs until the LIDAR is disconnected or an exception is
     raised by the underlying PyRPlidar library.
     """
     buff = []
     started = False
-
     for meas in lidar.start_scan_express(mode)():
         if meas.start_flag:
+            # A start_flag marks the beginning of a new rotation.
+            # Yield the completed buffer from the previous rotation.
             if started and buff:
                 yield [m.angle for m in buff], [m.distance for m in buff]
             buff = [meas]
