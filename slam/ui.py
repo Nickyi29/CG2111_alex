@@ -76,7 +76,7 @@ class SlamApp(App[None]):
 
     #header {
         height: auto;
-        color: bright_white;
+        color: ansi_bright_white;
         background: #1a2535;
         padding: 0 1;
         text-style: bold;
