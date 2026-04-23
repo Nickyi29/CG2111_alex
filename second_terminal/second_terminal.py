@@ -280,13 +280,8 @@ def _handleInput(line: str, client: TCPClient):
         _printHelp()
         return
 
-    # ---- Gate for preset keys ----
-    preset_keys = {
-        'h', 'j', 'r',
-        'i', 'k', 'y', 't',
-        'u', 'o', 'p', 'l',
-        'n', 'm',
-        '1', '2', '3', '4'
+    preset_key = {
+        'h'
     }
 
     if line in preset_keys and _waiting_for_ack:
